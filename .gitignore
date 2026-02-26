@@ -1,2 +1,7 @@
 *.csv
-python3.*
+
+# Build / packaging
+*.egg-info/
+dist/
+build/
+__pycache__/
