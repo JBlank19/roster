@@ -1,16 +1,32 @@
 import argparse
 import calendar
 from datetime import date
+from pathlib import Path
 
 import pandas as pd
 import airportsdata
-from pathlib import Path
 
 
-def calculate_local_time(df, utc_col, tz_col):
+def calculate_local_time(df: pd.DataFrame, utc_col: str, tz_col: str) -> pd.Series:
     """
-    Converts a UTC column to local time based on a timezone column.
-    We iterate by unique timezone groups for performance.
+    Convert a UTC column to local time based on a timezone column.
+
+    Iterates by unique timezone groups for performance.
+
+    Parameters
+    ----------
+    df : pandas.DataFrame
+        DataFrame containing the UTC timestamps and timezone info.
+    utc_col : str
+        Name of the column with UTC datetime values.
+    tz_col : str
+        Name of the column with IANA timezone strings (e.g. 'Europe/Madrid').
+
+    Returns
+    -------
+    pandas.Series
+        Series of timezone-naive datetimes representing local times.
+        Entries with missing or invalid timezones are left as NaT.
     """
     local_series = pd.Series(pd.NaT, index=df.index)
 
@@ -30,8 +46,22 @@ def calculate_local_time(df, utc_col, tz_col):
     return local_series
 
 
-def clean(dirty_file, clean_file):
-    """Clean EUROCONTROL flight data from dirty_file and save to clean_file."""
+def clean(dirty_file: str | Path, clean_file: str | Path) -> None:
+    """
+    Clean EUROCONTROL flight data and save the result.
+
+    Loads raw CSV data, validates airport codes, converts timestamps to both
+    UTC and local time, adds wake turbulence categories, and exports a
+    cleaned CSV.
+
+    Parameters
+    ----------
+    dirty_file : str or pathlib.Path
+        Path to the raw EUROCONTROL CSV file.
+    clean_file : str or pathlib.Path
+        Path where the cleaned CSV will be written. Parent directories are
+        created automatically if they don't exist.
+    """
     input_file = Path(dirty_file)
     output_file = Path(clean_file)
 
