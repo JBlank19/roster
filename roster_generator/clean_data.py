@@ -153,7 +153,7 @@ def clean(dirty_file: str | Path, clean_file: str | Path) -> None:
     df_clean['GATE_ATD_LOCAL'] = calculate_local_time(df_clean, 'GATE_ATD_UTC', 'DEP_TZ')
 
     df_clean['RWY_STA_LOCAL'] = calculate_local_time(df_clean, 'RWY_STA_UTC', 'ARR_TZ')
-    df_clean['RWY_ATA_LOCAL'] = calculate_local_time(df_clean, 'GATE_ATA_UTC', 'ARR_TZ')
+    df_clean['RWY_ATA_LOCAL'] = calculate_local_time(df_clean, 'RWY_ATA_UTC', 'ARR_TZ')
 
     df_clean.drop(columns=['DEP_TZ', 'ARR_TZ'], inplace=True)
 

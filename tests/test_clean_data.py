@@ -396,11 +396,15 @@ class TestClean:
         gate_std = df.iloc[0]["GATE_STD_UTC"]
         assert gate_std.startswith("2023-09-01"), f"Unexpected format: {gate_std}"
 
-    def test_rwy_ata_local_is_nat_due_to_column_typo(self, tmp_path):
-        """Line 156 references 'GATE_ATA_UTC' which doesn't exist, so
-        RWY_ATA_LOCAL should be NaT for all rows (known bug)."""
-        csv = _make_raw_csv(tmp_path, [VALID_FLIGHT])
+    def test_rwy_ata_local_computed(self, tmp_path):
+        """RWY_ATA_LOCAL should be RWY_ATA_UTC converted to arrival TZ."""
+        row = {
+            **VALID_FLIGHT,
+            "ADES": "EGLL",
+            "ACTUAL ARRIVAL TIME": "01-09-2023 10:00:00",
+        }
+        csv = _make_raw_csv(tmp_path, [row])
         out = tmp_path / "clean.csv"
         clean(csv, out)
-        df = pd.read_csv(out)
-        assert df["RWY_ATA_LOCAL"].isna().all()
+        df = pd.read_csv(out, parse_dates=["RWY_ATA_LOCAL"])
+        assert df.iloc[0]["RWY_ATA_LOCAL"].hour == 11  # BST = UTC+1
