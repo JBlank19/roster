@@ -12,4 +12,5 @@ dependencies = [
     "airportsdata",
     "aircraft-list",
     "pytz",
+    "pytest",
 ]

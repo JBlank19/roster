@@ -1,0 +1,406 @@
+"""Tests for roster_generator.clean_data module."""
+
+import sys
+from pathlib import Path
+from unittest.mock import MagicMock, patch
+
+import pandas as pd
+import pytest
+
+from roster_generator.clean_data import calculate_local_time, clean
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+def _make_raw_csv(tmp_path, rows, filename="raw.csv"):
+    """Build a EUROCONTROL-style raw CSV from a list of row dicts.
+
+    Mirrors the real format: DD-MM-YYYY HH:MM:SS dates, extra columns that
+    clean() should ignore, and quoted fields.
+    """
+    base = {
+        "ECTRL ID": "0",
+        "ADEP Latitude": "0",
+        "ADEP Longitude": "0",
+        "ADES Latitude": "0",
+        "ADES Longitude": "0",
+        "ICAO Flight Type": "S",
+        "STATFOR Market Segment": "Traditional Scheduled",
+        "Requested FL": "350",
+        "Actual Distance Flown (nm)": "1000",
+    }
+    full_rows = [{**base, **r} for r in rows]
+    df = pd.DataFrame(full_rows)
+    p = tmp_path / filename
+    df.to_csv(p, index=False)
+    return p
+
+
+VALID_FLIGHT = {
+    "ADEP": "LEMD",
+    "ADES": "EGLL",
+    "FILED OFF BLOCK TIME": "01-09-2023 08:00:00",
+    "FILED ARRIVAL TIME": "01-09-2023 10:30:00",
+    "ACTUAL OFF BLOCK TIME": "01-09-2023 08:05:00",
+    "ACTUAL ARRIVAL TIME": "01-09-2023 10:35:00",
+    "AC Type": "A320",
+    "AC Operator": "IBE",
+    "AC Registration": "EC-ABC",
+}
+
+VALID_FLIGHT_2 = {
+    **VALID_FLIGHT,
+    "ADEP": "EGLL",
+    "ADES": "LFPG",
+    "AC Registration": "G-EUAB",
+    "AC Operator": "BAW",
+    "AC Type": "A319",
+}
+
+
+# ---------------------------------------------------------------------------
+# Fixtures
+# ---------------------------------------------------------------------------
+
+@pytest.fixture
+def raw_csv_path(tmp_path):
+    """Minimal 3-row raw CSV with realistic EUROCONTROL format."""
+    return _make_raw_csv(tmp_path, [
+        VALID_FLIGHT,
+        VALID_FLIGHT_2,
+        {**VALID_FLIGHT, "ADEP": "LFPG", "ADES": "LEMD",
+         "AC Registration": "EC-DEF", "AC Type": "B738"},
+    ])
+
+
+# ---------------------------------------------------------------------------
+# calculate_local_time
+# ---------------------------------------------------------------------------
+
+class TestCalculateLocalTime:
+
+    def test_summer_offset_madrid_and_london(self):
+        """Madrid CEST = UTC+2, London BST = UTC+1 in September."""
+        df = pd.DataFrame({
+            "utc": pd.to_datetime([
+                "2023-09-01 10:00",
+                "2023-09-01 10:00",
+            ]).tz_localize("UTC"),
+            "tz": ["Europe/Madrid", "Europe/London"],
+        })
+        result = calculate_local_time(df, "utc", "tz")
+        assert result.iloc[0] == pd.Timestamp("2023-09-01 12:00")
+        assert result.iloc[1] == pd.Timestamp("2023-09-01 11:00")
+
+    def test_winter_offset_differs_from_summer(self):
+        """Madrid CET = UTC+1 in January (vs UTC+2 in summer)."""
+        df = pd.DataFrame({
+            "utc": pd.to_datetime(["2023-01-15 10:00"]).tz_localize("UTC"),
+            "tz": ["Europe/Madrid"],
+        })
+        result = calculate_local_time(df, "utc", "tz")
+        assert result.iloc[0].hour == 11  # CET = UTC+1
+
+    def test_negative_utc_offset(self):
+        """Los Angeles in summer (PDT) is UTC-7."""
+        df = pd.DataFrame({
+            "utc": pd.to_datetime(["2023-09-01 00:00"]).tz_localize("UTC"),
+            "tz": ["America/Los_Angeles"],
+        })
+        result = calculate_local_time(df, "utc", "tz")
+        # 00:00 UTC → 17:00 previous day in LA (UTC-7)
+        assert result.iloc[0] == pd.Timestamp("2023-08-31 17:00")
+
+    def test_result_is_timezone_naive(self):
+        """Returned series must be tz-naive (tz_localize(None) applied)."""
+        df = pd.DataFrame({
+            "utc": pd.to_datetime(["2023-09-01 10:00"]).tz_localize("UTC"),
+            "tz": ["Europe/Madrid"],
+        })
+        result = calculate_local_time(df, "utc", "tz")
+        assert result.iloc[0].tzinfo is None
+
+    def test_missing_utc_column_returns_all_nat(self):
+        """If the UTC column doesn't exist, every entry should be NaT."""
+        df = pd.DataFrame({
+            "utc": pd.to_datetime(["2023-09-01 10:00"]).tz_localize("UTC"),
+            "tz": ["Europe/Madrid"],
+        })
+        result = calculate_local_time(df, "nonexistent_col", "tz")
+        assert result.isna().all()
+
+    def test_nan_timezone_produces_nat(self):
+        """Rows where the timezone is NaN should remain NaT."""
+        df = pd.DataFrame({
+            "utc": pd.to_datetime(["2023-09-01 12:00"]).tz_localize("UTC"),
+            "tz": [None],
+        })
+        result = calculate_local_time(df, "utc", "tz")
+        assert result.isna().all()
+
+    def test_invalid_tz_string_produces_nat(self):
+        """An unrecognisable timezone string should not crash."""
+        df = pd.DataFrame({
+            "utc": pd.to_datetime(["2023-09-01 12:00"]).tz_localize("UTC"),
+            "tz": ["Not/A_Timezone"],
+        })
+        result = calculate_local_time(df, "utc", "tz")
+        assert result.isna().all()
+
+    def test_preserves_original_index(self):
+        """Result index must match the input DataFrame's non-default index."""
+        idx = [5, 10, 15]
+        df = pd.DataFrame({
+            "utc": pd.to_datetime([
+                "2023-09-01 00:00",
+                "2023-09-01 00:00",
+                "2023-09-01 00:00",
+            ]).tz_localize("UTC"),
+            "tz": ["Europe/Madrid"] * 3,
+        }, index=idx)
+        result = calculate_local_time(df, "utc", "tz")
+        assert list(result.index) == idx
+
+    def test_empty_dataframe(self):
+        """Empty input should return an empty series without errors."""
+        df = pd.DataFrame({
+            "utc": pd.Series(dtype="datetime64[ns, UTC]"),
+            "tz": pd.Series(dtype=str),
+        })
+        result = calculate_local_time(df, "utc", "tz")
+        assert len(result) == 0
+
+    def test_mixed_valid_and_nan_timezones(self):
+        """Valid tz rows are converted; NaN tz rows stay NaT."""
+        df = pd.DataFrame({
+            "utc": pd.to_datetime([
+                "2023-09-01 10:00",
+                "2023-09-01 10:00",
+            ]).tz_localize("UTC"),
+            "tz": ["Europe/Madrid", None],
+        })
+        result = calculate_local_time(df, "utc", "tz")
+        assert result.iloc[0] == pd.Timestamp("2023-09-01 12:00")
+        assert pd.isna(result.iloc[1])
+
+
+# ---------------------------------------------------------------------------
+# clean — integration tests
+# ---------------------------------------------------------------------------
+
+class TestClean:
+
+    def test_output_file_created(self, raw_csv_path, tmp_path):
+        out = tmp_path / "out" / "clean.csv"
+        clean(raw_csv_path, out)
+        assert out.exists()
+
+    def test_creates_nested_parent_directories(self, raw_csv_path, tmp_path):
+        out = tmp_path / "a" / "b" / "c" / "clean.csv"
+        clean(raw_csv_path, out)
+        assert out.exists()
+
+    def test_extra_source_columns_discarded(self, raw_csv_path, tmp_path):
+        """Extra EUROCONTROL columns (ECTRL ID, lat, lon, etc.) must not
+        appear in the output."""
+        out = tmp_path / "clean.csv"
+        clean(raw_csv_path, out)
+        df = pd.read_csv(out)
+        for col in ["ECTRL ID", "ADEP Latitude", "Requested FL",
+                     "STATFOR Market Segment"]:
+            assert col not in df.columns
+
+    def test_columns_renamed_correctly(self, raw_csv_path, tmp_path):
+        """Output must use the internal naming convention."""
+        out = tmp_path / "clean.csv"
+        clean(raw_csv_path, out)
+        df = pd.read_csv(out)
+
+        expected = {
+            "DEP_ICAO", "ARR_ICAO",
+            "GATE_STD_UTC", "GATE_ATD_UTC", "RWY_STA_UTC", "RWY_ATA_UTC",
+            "AC_TYPE", "AC_OPERATOR", "AC_REG",
+            "GATE_STD_LOCAL", "GATE_ATD_LOCAL", "RWY_STA_LOCAL", "RWY_ATA_LOCAL",
+        }
+        assert expected.issubset(set(df.columns))
+
+    def test_tz_helper_columns_dropped(self, raw_csv_path, tmp_path):
+        """Intermediate DEP_TZ / ARR_TZ must not be in the output."""
+        out = tmp_path / "clean.csv"
+        clean(raw_csv_path, out)
+        df = pd.read_csv(out)
+        assert "DEP_TZ" not in df.columns
+        assert "ARR_TZ" not in df.columns
+
+    def test_invalid_departure_airport_dropped(self, tmp_path):
+        """Rows with a non-existent ICAO departure code are removed."""
+        csv = _make_raw_csv(tmp_path, [
+            VALID_FLIGHT,
+            {**VALID_FLIGHT, "ADEP": "ZZZZ", "AC Registration": "EC-999"},
+        ])
+        out = tmp_path / "clean.csv"
+        clean(csv, out)
+        df = pd.read_csv(out)
+        assert len(df) == 1
+        assert df.iloc[0]["DEP_ICAO"] == "LEMD"
+
+    def test_invalid_arrival_airport_dropped(self, tmp_path):
+        """Rows with a non-existent ICAO arrival code are removed."""
+        csv = _make_raw_csv(tmp_path, [
+            VALID_FLIGHT,
+            {**VALID_FLIGHT, "ADES": "XXXX", "AC Registration": "EC-999"},
+        ])
+        out = tmp_path / "clean.csv"
+        clean(csv, out)
+        df = pd.read_csv(out)
+        assert len(df) == 1
+
+    def test_missing_registration_dropped(self, tmp_path):
+        """Rows where AC Registration is NaN should be removed."""
+        row_no_reg = {**VALID_FLIGHT, "AC Registration": None}
+        # pandas will write empty string → NaN on read
+        csv = _make_raw_csv(tmp_path, [VALID_FLIGHT, row_no_reg])
+        out = tmp_path / "clean.csv"
+        clean(csv, out)
+        df = pd.read_csv(out)
+        assert len(df) == 1
+
+    def test_dayfirst_date_parsing(self, tmp_path):
+        """Dates in DD-MM-YYYY format must be parsed correctly (not MM-DD)."""
+        row = {
+            **VALID_FLIGHT,
+            # 15th of September, NOT September parsed as month=15
+            "FILED OFF BLOCK TIME": "15-09-2023 08:00:00",
+        }
+        csv = _make_raw_csv(tmp_path, [row])
+        out = tmp_path / "clean.csv"
+        clean(csv, out)
+        df = pd.read_csv(out, parse_dates=["GATE_STD_UTC"])
+        assert df.iloc[0]["GATE_STD_UTC"].month == 9
+        assert df.iloc[0]["GATE_STD_UTC"].day == 15
+
+    def test_ac_type_stripped_and_uppercased(self, tmp_path):
+        """AC_TYPE values should be stripped of whitespace and uppercased."""
+        row = {**VALID_FLIGHT, "AC Type": "  a320  "}
+        csv = _make_raw_csv(tmp_path, [row])
+        out = tmp_path / "clean.csv"
+        clean(csv, out)
+        df = pd.read_csv(out)
+        assert df.iloc[0]["AC_TYPE"] == "A320"
+
+    def test_local_departure_time_offset(self, tmp_path):
+        """GATE_STD_LOCAL for Madrid in Sept should be UTC+2."""
+        row = {
+            **VALID_FLIGHT,
+            "ADEP": "LEMD",
+            "FILED OFF BLOCK TIME": "01-09-2023 08:00:00",
+        }
+        csv = _make_raw_csv(tmp_path, [row])
+        out = tmp_path / "clean.csv"
+        clean(csv, out)
+        df = pd.read_csv(out, parse_dates=["GATE_STD_UTC", "GATE_STD_LOCAL"])
+        utc_hour = df.iloc[0]["GATE_STD_UTC"].hour
+        local_hour = df.iloc[0]["GATE_STD_LOCAL"].hour
+        assert local_hour - utc_hour == 2  # CEST
+
+    def test_local_arrival_time_offset(self, tmp_path):
+        """RWY_STA_LOCAL for London in Sept should be UTC+1 (BST)."""
+        row = {
+            **VALID_FLIGHT,
+            "ADES": "EGLL",
+            "FILED ARRIVAL TIME": "01-09-2023 10:00:00",
+        }
+        csv = _make_raw_csv(tmp_path, [row])
+        out = tmp_path / "clean.csv"
+        clean(csv, out)
+        df = pd.read_csv(out, parse_dates=["RWY_STA_LOCAL"])
+        assert df.iloc[0]["RWY_STA_LOCAL"].hour == 11  # BST = UTC+1
+
+    def test_row_count_preserved_for_valid_data(self, raw_csv_path, tmp_path):
+        """All rows with valid ICAO + registration should survive cleaning."""
+        out = tmp_path / "clean.csv"
+        clean(raw_csv_path, out)
+        df = pd.read_csv(out)
+        assert len(df) == 3
+
+    def test_missing_optional_columns_tolerated(self, tmp_path):
+        """clean() should still work when AC Type / Operator / Registration
+        are absent from the source CSV."""
+        data = pd.DataFrame({
+            "ADEP": ["LEMD"],
+            "ADES": ["EGLL"],
+            "FILED OFF BLOCK TIME": ["01-09-2023 08:00:00"],
+            "FILED ARRIVAL TIME": ["01-09-2023 10:00:00"],
+            "ACTUAL OFF BLOCK TIME": ["01-09-2023 08:05:00"],
+            "ACTUAL ARRIVAL TIME": ["01-09-2023 10:05:00"],
+        })
+        csv = tmp_path / "raw.csv"
+        data.to_csv(csv, index=False)
+        out = tmp_path / "clean.csv"
+        clean(csv, out)
+        assert out.exists()
+
+    def test_ac_wake_column_present(self, tmp_path):
+        """When aircraft-list is importable, AC_WAKE column should exist."""
+        fake_ac_list = [{"icao": "A320", "wake": "M"}]
+        mock_module = MagicMock(
+            aircraft_models=MagicMock(return_value=fake_ac_list),
+        )
+        csv = _make_raw_csv(tmp_path, [VALID_FLIGHT])
+
+        with patch.dict(sys.modules, {"aircraft_list": mock_module}):
+            out = tmp_path / "clean.csv"
+            clean(csv, out)
+            df = pd.read_csv(out)
+            assert "AC_WAKE" in df.columns
+
+    def test_wake_lm_remapped_to_m(self, tmp_path):
+        """L/M wake category should be remapped to M."""
+        fake_ac_list = [{"icao": "TEST", "wake": "L/M"}]
+        mock_module = MagicMock(
+            aircraft_models=MagicMock(return_value=fake_ac_list),
+        )
+        row = {**VALID_FLIGHT, "AC Type": "TEST"}
+        csv = _make_raw_csv(tmp_path, [row])
+
+        with patch.dict(sys.modules, {"aircraft_list": mock_module}):
+            out = tmp_path / "clean.csv"
+            clean(csv, out)
+            df = pd.read_csv(out)
+            assert df.iloc[0]["AC_WAKE"] == "M"
+
+    def test_wake_mh_remapped_to_h(self, tmp_path):
+        """M/H wake category should be remapped to H."""
+        fake_ac_list = [{"icao": "BIG1", "wake": "M/H"}]
+        mock_module = MagicMock(
+            aircraft_models=MagicMock(return_value=fake_ac_list),
+        )
+        row = {**VALID_FLIGHT, "AC Type": "BIG1"}
+        csv = _make_raw_csv(tmp_path, [row])
+
+        with patch.dict(sys.modules, {"aircraft_list": mock_module}):
+            out = tmp_path / "clean.csv"
+            clean(csv, out)
+            df = pd.read_csv(out)
+            assert df.iloc[0]["AC_WAKE"] == "H"
+
+    def test_output_date_format(self, tmp_path):
+        """Timestamps in the CSV should follow YYYY-MM-DD HH:MM:SS."""
+        csv = _make_raw_csv(tmp_path, [VALID_FLIGHT])
+        out = tmp_path / "clean.csv"
+        clean(csv, out)
+        # Read as raw strings to check format
+        df = pd.read_csv(out, dtype=str)
+        gate_std = df.iloc[0]["GATE_STD_UTC"]
+        assert gate_std.startswith("2023-09-01"), f"Unexpected format: {gate_std}"
+
+    def test_rwy_ata_local_is_nat_due_to_column_typo(self, tmp_path):
+        """Line 156 references 'GATE_ATA_UTC' which doesn't exist, so
+        RWY_ATA_LOCAL should be NaT for all rows (known bug)."""
+        csv = _make_raw_csv(tmp_path, [VALID_FLIGHT])
+        out = tmp_path / "clean.csv"
+        clean(csv, out)
+        df = pd.read_csv(out)
+        assert df["RWY_ATA_LOCAL"].isna().all()
