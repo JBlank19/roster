@@ -176,7 +176,7 @@ def _build_markov_tables(base_df):
 
 # --- Public API ---
 
-def generate_markov(config, airline_filter=None):
+def generate_markov(config: PipelineConfig, airline_filter: str | None = None) -> None:
     """Run Markov chain analysis and generate synthetic initial conditions.
 
     Pipeline:
@@ -190,8 +190,15 @@ def generate_markov(config, airline_filter=None):
     ----------
     config : PipelineConfig
         Paths and parameters for the pipeline.
-    airline_filter : str, optional
+    airline_filter : str or None, optional
         Restrict analysis to a single ICAO airline code.
+
+    Raises
+    ------
+    FileNotFoundError
+        If ``config.schedule_file`` does not exist.
+    ValueError
+        If no usable flights remain after normalization and filtering.
     """
     seed = config.seed
     suffix = config.suffix
