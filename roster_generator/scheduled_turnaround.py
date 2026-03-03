@@ -23,7 +23,7 @@ import pandas as pd
 
 from .config import PipelineConfig
 
-# --- Column aliases ---
+# --- Column aliases & constants ---
 
 AC_REG_COL = "AC_REG"
 AIRLINE_COL = "AC_OPERATOR"
@@ -40,7 +40,10 @@ INTRADAY_CATEGORY = "intraday"
 NEXT_DAY_CATEGORY = "next_day"
 
 
+# --- Helpers ---
+
 def _safe_shape(value: float, minimum: float = 0.05) -> float:
+    """Clamp shape parameter to a finite lower bound."""
     if not np.isfinite(value):
         return float(minimum)
     return float(max(value, minimum))
@@ -77,6 +80,9 @@ def _encode_sparse_hist(hist: np.ndarray) -> str:
             parts.append(f"{minute}:{c}")
     return ";".join(parts)
 
+
+
+# --- Data preparation ---
 
 def _prepare_turnaround_events(df: pd.DataFrame) -> pd.DataFrame:
     """Build linked turnaround events and keep day_gap >= 0."""
@@ -135,6 +141,8 @@ def _prepare_turnaround_events(df: pd.DataFrame) -> pd.DataFrame:
     return out
 
 
+# --- Parameter fitting ---
+
 def _iter_group_frames(events: pd.DataFrame) -> Iterable[Tuple[Tuple[str, str, str, str], pd.DataFrame]]:
     """Yield (key, frame) for exact (airline, previous_origin, origin, wake)."""
     for key, g in events.groupby(["airline", "previous_origin", "origin", "wake"], sort=False):
@@ -144,6 +152,7 @@ def _iter_group_frames(events: pd.DataFrame) -> Iterable[Tuple[Tuple[str, str, s
 def _build_param_and_temporal_rows(
     events: pd.DataFrame,
 ) -> Tuple[List[Dict[str, object]], List[Dict[str, object]], List[Dict[str, object]]]:
+    """Fit lognormal parameters per (airline, wake) and build temporal histograms per route."""
     intraday_rows: List[Dict[str, object]] = []
     next_day_rows: List[Dict[str, object]] = []
     temporal_rows: List[Dict[str, object]] = []
@@ -194,11 +203,14 @@ def _build_param_and_temporal_rows(
     return intraday_rows, next_day_rows, temporal_rows
 
 
+# --- Validation ---
+
 def _validate_outputs(
     intraday_df: pd.DataFrame,
     next_day_df: pd.DataFrame,
     temporal_df: pd.DataFrame,
 ) -> None:
+    """Sanity checks on output DataFrames: column names, duplicates, and finite params."""
     if list(intraday_df.columns) != ["airline", "wake", "location", "shape"]:
         raise ValueError(f"intraday columns mismatch: {list(intraday_df.columns)}")
     if intraday_df.duplicated(subset=["airline", "wake"]).any():
@@ -235,6 +247,13 @@ def analyze_turnaround_distribution(config: PipelineConfig) -> None:
     ----------
     config : PipelineConfig
         Paths and parameters for the pipeline.
+
+    Raises
+    ------
+    FileNotFoundError
+        If ``config.schedule_file`` does not exist.
+    ValueError
+        If no valid turnaround events remain after filtering.
     """
     print("[Turnaround] --- ROUTE-AWARE PARAMETRIC TURNAROUND ANALYSIS ---")
 
