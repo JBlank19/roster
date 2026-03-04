@@ -5,9 +5,7 @@ Builds route/wake turnaround parameters from real linked turnaround events and w
   - scheduled_turnaround_intraday_params{suffix}.csv
       columns: airline,wake,location,shape
       (Lognormal parameters in log-space)
-  - scheduled_turnaround_next_day_params{suffix}.csv
-      columns: airline,previous_origin,origin,wake,location,shape
-      (kept for compatibility; generation no longer samples a next-day distribution)
+
   - scheduled_turnaround_temporal_profile{suffix}.csv
       columns: airline,previous_origin,origin,wake,intraday_sparse,next_day_sparse,total_intraday,total_next_day
 """
@@ -151,10 +149,9 @@ def _iter_group_frames(events: pd.DataFrame) -> Iterable[Tuple[Tuple[str, str, s
 
 def _build_param_and_temporal_rows(
     events: pd.DataFrame,
-) -> Tuple[List[Dict[str, object]], List[Dict[str, object]], List[Dict[str, object]]]:
+) -> Tuple[List[Dict[str, object]], List[Dict[str, object]]]:
     """Fit lognormal parameters per (airline, wake) and build temporal histograms per route."""
     intraday_rows: List[Dict[str, object]] = []
-    next_day_rows: List[Dict[str, object]] = []
     temporal_rows: List[Dict[str, object]] = []
 
     seen_temporal = set()
@@ -200,14 +197,13 @@ def _build_param_and_temporal_rows(
                 }
             )
 
-    return intraday_rows, next_day_rows, temporal_rows
+    return intraday_rows, temporal_rows
 
 
 # --- Validation ---
 
 def _validate_outputs(
     intraday_df: pd.DataFrame,
-    next_day_df: pd.DataFrame,
     temporal_df: pd.DataFrame,
 ) -> None:
     """Sanity checks on output DataFrames: column names, duplicates, and finite params."""
@@ -258,7 +254,6 @@ def analyze_turnaround_distribution(config: PipelineConfig) -> None:
     print("[Turnaround] --- ROUTE-AWARE PARAMETRIC TURNAROUND ANALYSIS ---")
 
     intraday_path = config.analysis_path("scheduled_turnaround_intraday_params")
-    next_day_path = config.analysis_path("scheduled_turnaround_next_day_params")
     temporal_path = config.analysis_path("scheduled_turnaround_temporal_profile")
 
     if not config.schedule_file.exists():
@@ -278,17 +273,12 @@ def analyze_turnaround_distribution(config: PipelineConfig) -> None:
     if events.empty:
         raise ValueError("No valid turnaround events found.")
 
-    intraday_rows, next_day_rows, temporal_rows = _build_param_and_temporal_rows(events)
+    intraday_rows, temporal_rows = _build_param_and_temporal_rows(events)
 
     intraday_df = pd.DataFrame(
         intraday_rows,
         columns=["airline", "wake", "location", "shape"],
     ).sort_values(["airline", "wake"]).reset_index(drop=True)
-
-    next_day_df = pd.DataFrame(
-        next_day_rows,
-        columns=["airline", "previous_origin", "origin", "wake", "location", "shape"],
-    ).sort_values(["airline", "previous_origin", "origin", "wake"]).reset_index(drop=True)
 
     temporal_df = pd.DataFrame(
         temporal_rows,
@@ -304,15 +294,13 @@ def analyze_turnaround_distribution(config: PipelineConfig) -> None:
         ],
     ).sort_values(["airline", "previous_origin", "origin", "wake"]).reset_index(drop=True)
 
-    _validate_outputs(intraday_df, next_day_df, temporal_df)
+    _validate_outputs(intraday_df, temporal_df)
 
     config.analysis_dir.mkdir(parents=True, exist_ok=True)
     intraday_df.to_csv(intraday_path, index=False)
-    next_day_df.to_csv(next_day_path, index=False)
     temporal_df.to_csv(temporal_path, index=False)
 
     print(f"[Turnaround] Saved intraday params: {intraday_path} ({len(intraday_df)} rows)")
-    print(f"[Turnaround] Saved next-day params: {next_day_path} ({len(next_day_df)} rows)")
     print(f"[Turnaround] Saved temporal profile: {temporal_path} ({len(temporal_df)} rows)")
     print("[Turnaround] --- SUCCESS ---")
 

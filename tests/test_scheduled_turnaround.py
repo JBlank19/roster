@@ -8,10 +8,10 @@ Covers
 - _encode_sparse_hist(): zero-suppression, correct minute labels, round-trip format.
 - _prepare_turnaround_events(): ZZZ remapping, missing wake default, datetime parsing,
   linked-flight construction, day_gap filtering, category assignment, arrival binning.
-- _build_param_and_temporal_rows(): return structure, intraday keying by (airline, wake),
+- _build_param_and_temporal_rows(): return structure (2 lists), intraday keying by (airline, wake),
   temporal keying by route, histogram consistency.
 - _validate_outputs(): column checks, duplicate detection, NaN/non-finite/non-positive shape.
-- analyze_turnaround_distribution(): FileNotFoundError, output file creation, suffix support.
+- analyze_turnaround_distribution(): FileNotFoundError, output file creation (2 files), suffix support.
 
 Physical tests
 --------------
@@ -398,24 +398,23 @@ class TestPrepareTurnaroundEventsPhysical:
 class TestBuildParamAndTemporalRowsSoftware:
 
     def test_returns_three_lists(self, intraday_events):
-        """Should return (intraday_rows, next_day_rows, temporal_rows)."""
+        """Should return (intraday_rows, temporal_rows)."""
         result = _build_param_and_temporal_rows(intraday_events)
-        assert len(result) == 3
-        intraday_rows, next_day_rows, temporal_rows = result
+        assert len(result) == 2
+        intraday_rows, temporal_rows = result
         assert isinstance(intraday_rows, list)
-        assert isinstance(next_day_rows, list)
         assert isinstance(temporal_rows, list)
 
     def test_intraday_rows_have_expected_keys(self, intraday_events):
         """Each intraday row should have airline, wake, location, shape."""
-        intraday_rows, _, _ = _build_param_and_temporal_rows(intraday_events)
+        intraday_rows, temporal_rows = _build_param_and_temporal_rows(intraday_events)
         assert len(intraday_rows) > 0
         for row in intraday_rows:
             assert set(row.keys()) == {"airline", "wake", "location", "shape"}
 
     def test_temporal_rows_have_expected_keys(self, intraday_events):
         """Each temporal row should have the full route key + histogram fields."""
-        _, _, temporal_rows = _build_param_and_temporal_rows(intraday_events)
+        _, temporal_rows = _build_param_and_temporal_rows(intraday_events)
         expected_keys = {"airline", "previous_origin", "origin", "wake",
                          "intraday_sparse", "next_day_sparse",
                          "total_intraday", "total_next_day"}
@@ -424,14 +423,14 @@ class TestBuildParamAndTemporalRowsSoftware:
 
     def test_intraday_keyed_by_airline_wake(self, intraday_events):
         """Intraday params should be aggregated by (airline, wake), not per route."""
-        intraday_rows, _, _ = _build_param_and_temporal_rows(intraday_events)
+        intraday_rows, temporal_rows = _build_param_and_temporal_rows(intraday_events)
         keys = {(r["airline"], r["wake"]) for r in intraday_rows}
         # All flights are IBE/M, so there should be exactly one entry
         assert keys == {("IBE", "M")}
 
     def test_temporal_rows_keyed_by_route(self, intraday_events):
         """Temporal rows should be keyed by (airline, previous_origin, origin, wake)."""
-        _, _, temporal_rows = _build_param_and_temporal_rows(intraday_events)
+        _, temporal_rows = _build_param_and_temporal_rows(intraday_events)
         keys = {(r["airline"], r["previous_origin"], r["origin"], r["wake"])
                 for r in temporal_rows}
         # Should have distinct route-level entries
@@ -439,7 +438,7 @@ class TestBuildParamAndTemporalRowsSoftware:
 
     def test_no_duplicate_temporal_keys(self, mixed_events):
         """No duplicate (airline, previous_origin, origin, wake) in temporal rows."""
-        _, _, temporal_rows = _build_param_and_temporal_rows(mixed_events)
+        _, temporal_rows = _build_param_and_temporal_rows(mixed_events)
         keys = [(r["airline"], r["previous_origin"], r["origin"], r["wake"])
                 for r in temporal_rows]
         assert len(keys) == len(set(keys))
@@ -507,9 +506,6 @@ class TestValidateOutputs:
             "location": [3.5],
             "shape": [0.3],
         })
-        next_day_df = pd.DataFrame(
-            columns=["airline", "previous_origin", "origin", "wake", "location", "shape"]
-        )
         temporal_df = pd.DataFrame({
             "airline": ["IBE"],
             "previous_origin": ["LEMD"],
@@ -520,7 +516,7 @@ class TestValidateOutputs:
             "total_intraday": [3],
             "total_next_day": [0],
         })
-        return intraday_df, next_day_df, temporal_df
+        return intraday_df, temporal_df
 
     def test_valid_frames_pass(self):
         """Well-formed DataFrames should pass without error."""
@@ -528,52 +524,52 @@ class TestValidateOutputs:
 
     def test_wrong_intraday_columns_raises(self):
         """ValueError if intraday columns are wrong."""
-        intraday_df, next_day_df, temporal_df = self._make_valid_frames()
+        intraday_df, temporal_df = self._make_valid_frames()
         intraday_df = intraday_df.rename(columns={"shape": "sigma"})
         with pytest.raises(ValueError, match="intraday columns mismatch"):
-            _validate_outputs(intraday_df, next_day_df, temporal_df)
+            _validate_outputs(intraday_df, temporal_df)
 
     def test_duplicate_intraday_keys_raises(self):
         """ValueError if intraday has duplicate (airline, wake) pairs."""
-        intraday_df, next_day_df, temporal_df = self._make_valid_frames()
+        intraday_df, temporal_df = self._make_valid_frames()
         intraday_df = pd.concat([intraday_df, intraday_df], ignore_index=True)
         with pytest.raises(ValueError, match="duplicate keys"):
-            _validate_outputs(intraday_df, next_day_df, temporal_df)
+            _validate_outputs(intraday_df, temporal_df)
 
     def test_nan_params_raises(self):
         """ValueError if intraday params contain NaN."""
-        intraday_df, next_day_df, temporal_df = self._make_valid_frames()
+        intraday_df, temporal_df = self._make_valid_frames()
         intraday_df.loc[0, "location"] = np.nan
         with pytest.raises(ValueError, match="NaN"):
-            _validate_outputs(intraday_df, next_day_df, temporal_df)
+            _validate_outputs(intraday_df, temporal_df)
 
     def test_non_finite_params_raises(self):
         """ValueError if intraday params contain Inf."""
-        intraday_df, next_day_df, temporal_df = self._make_valid_frames()
+        intraday_df, temporal_df = self._make_valid_frames()
         intraday_df.loc[0, "shape"] = np.inf
         with pytest.raises(ValueError, match="non-finite"):
-            _validate_outputs(intraday_df, next_day_df, temporal_df)
+            _validate_outputs(intraday_df, temporal_df)
 
     def test_non_positive_shape_raises(self):
         """ValueError if shape is zero or negative."""
-        intraday_df, next_day_df, temporal_df = self._make_valid_frames()
+        intraday_df, temporal_df = self._make_valid_frames()
         intraday_df.loc[0, "shape"] = 0.0
         with pytest.raises(ValueError, match="non-positive shape"):
-            _validate_outputs(intraday_df, next_day_df, temporal_df)
+            _validate_outputs(intraday_df, temporal_df)
 
     def test_wrong_temporal_columns_raises(self):
         """ValueError if temporal columns are wrong."""
-        intraday_df, next_day_df, temporal_df = self._make_valid_frames()
+        intraday_df, temporal_df = self._make_valid_frames()
         temporal_df = temporal_df.drop(columns=["total_next_day"])
         with pytest.raises(ValueError, match="temporal columns mismatch"):
-            _validate_outputs(intraday_df, next_day_df, temporal_df)
+            _validate_outputs(intraday_df, temporal_df)
 
     def test_duplicate_temporal_keys_raises(self):
         """ValueError if temporal has duplicate route keys."""
-        intraday_df, next_day_df, temporal_df = self._make_valid_frames()
+        intraday_df, temporal_df = self._make_valid_frames()
         temporal_df = pd.concat([temporal_df, temporal_df], ignore_index=True)
         with pytest.raises(ValueError, match="temporal output contains duplicate"):
-            _validate_outputs(intraday_df, next_day_df, temporal_df)
+            _validate_outputs(intraday_df, temporal_df)
 
 
 # ---------------------------------------------------------------------------
@@ -600,7 +596,7 @@ class TestAnalyzeTurnaroundDistribution:
             analyze_turnaround_distribution(cfg)
 
     def test_creates_output_files(self, tmp_path):
-        """All three output CSVs should be created."""
+        """Both output CSVs should be created."""
         schedule_path = self._write_schedule_csv(tmp_path, INTRADAY_FLIGHTS)
         cfg = PipelineConfig(
             schedule_file=schedule_path,
@@ -609,7 +605,6 @@ class TestAnalyzeTurnaroundDistribution:
         )
         analyze_turnaround_distribution(cfg)
         assert (tmp_path / "analysis" / "scheduled_turnaround_intraday_params.csv").exists()
-        assert (tmp_path / "analysis" / "scheduled_turnaround_next_day_params.csv").exists()
         assert (tmp_path / "analysis" / "scheduled_turnaround_temporal_profile.csv").exists()
 
     def test_suffix_in_filenames(self, tmp_path):
@@ -623,7 +618,6 @@ class TestAnalyzeTurnaroundDistribution:
         )
         analyze_turnaround_distribution(cfg)
         assert (tmp_path / "analysis" / "scheduled_turnaround_intraday_params_test.csv").exists()
-        assert (tmp_path / "analysis" / "scheduled_turnaround_next_day_params_test.csv").exists()
         assert (tmp_path / "analysis" / "scheduled_turnaround_temporal_profile_test.csv").exists()
 
     def test_raises_on_empty_events(self, tmp_path):
