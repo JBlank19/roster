@@ -1,3 +1,4 @@
+from .airlines import generate_airlines
 from .airports import generate_airports
 from .clean_data import clean as clean_data
 from .config import PipelineConfig
