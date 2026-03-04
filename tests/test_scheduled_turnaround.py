@@ -452,38 +452,38 @@ class TestBuildParamAndTemporalRowsPhysical:
 
     def test_shape_is_positive(self, intraday_events):
         """All fitted shape parameters must be strictly positive."""
-        intraday_rows, _, _ = _build_param_and_temporal_rows(intraday_events)
+        intraday_rows, temporal_rows = _build_param_and_temporal_rows(intraday_events)
         for row in intraday_rows:
             assert row["shape"] > 0
 
     def test_shape_is_finite(self, intraday_events):
         """All fitted shape parameters must be finite."""
-        intraday_rows, _, _ = _build_param_and_temporal_rows(intraday_events)
+        intraday_rows, temporal_rows = _build_param_and_temporal_rows(intraday_events)
         for row in intraday_rows:
             assert np.isfinite(row["shape"])
 
     def test_location_is_finite(self, intraday_events):
         """All fitted location parameters must be finite."""
-        intraday_rows, _, _ = _build_param_and_temporal_rows(intraday_events)
+        intraday_rows, temporal_rows = _build_param_and_temporal_rows(intraday_events)
         for row in intraday_rows:
             assert np.isfinite(row["location"])
 
     def test_histogram_counts_non_negative(self, mixed_events):
         """total_intraday and total_next_day must be non-negative."""
-        _, _, temporal_rows = _build_param_and_temporal_rows(mixed_events)
+        _, temporal_rows = _build_param_and_temporal_rows(mixed_events)
         for row in temporal_rows:
             assert row["total_intraday"] >= 0
             assert row["total_next_day"] >= 0
 
     def test_histogram_total_matches_event_count(self, intraday_events):
         """Sum of all temporal histogram totals should equal number of events."""
-        _, _, temporal_rows = _build_param_and_temporal_rows(intraday_events)
+        _, temporal_rows = _build_param_and_temporal_rows(intraday_events)
         total = sum(r["total_intraday"] + r["total_next_day"] for r in temporal_rows)
         assert total == len(intraday_events)
 
     def test_sparse_hist_minutes_within_day(self, mixed_events):
         """All minute labels in sparse histograms must be in [0, 1440)."""
-        _, _, temporal_rows = _build_param_and_temporal_rows(mixed_events)
+        _, temporal_rows = _build_param_and_temporal_rows(mixed_events)
         for row in temporal_rows:
             for field in ("intraday_sparse", "next_day_sparse"):
                 if row[field]:
