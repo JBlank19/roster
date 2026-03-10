@@ -16,7 +16,7 @@ from unittest.mock import patch
 import pandas as pd
 import pytest
 
-from roster_generator.clean_data import calculate_local_time, clean
+from roster_generator.data_cleaning.clean_data import calculate_local_time, clean
 
 
 # ---------------------------------------------------------------------------
@@ -355,7 +355,7 @@ class TestClean:
         """When aircraft-list is importable, AC_WAKE column should exist."""
         csv = _make_raw_csv(tmp_path, [VALID_FLIGHT])
 
-        with patch("roster_generator.clean_data._load_wake_map", return_value={"A320": "M"}):
+        with patch("roster_generator.data_cleaning.clean_data._load_wake_map", return_value={"A320": "M"}):
             out = tmp_path / "clean.csv"
             clean(csv, out)
             df = pd.read_csv(out)
@@ -366,7 +366,7 @@ class TestClean:
         csv = _make_raw_csv(tmp_path, [VALID_FLIGHT])
         out = tmp_path / "clean.csv"
 
-        with patch("roster_generator.clean_data._load_wake_map", side_effect=ImportError):
+        with patch("roster_generator.data_cleaning.clean_data._load_wake_map", side_effect=ImportError):
             with pytest.raises(ImportError, match="aircraft-list not installed"):
                 clean(csv, out)
 
@@ -375,7 +375,7 @@ class TestClean:
         row = {**VALID_FLIGHT, "AC Type": "TEST"}
         csv = _make_raw_csv(tmp_path, [row])
 
-        with patch("roster_generator.clean_data._load_wake_map", return_value={"TEST": "L/M"}):
+        with patch("roster_generator.data_cleaning.clean_data._load_wake_map", return_value={"TEST": "L/M"}):
             out = tmp_path / "clean.csv"
             clean(csv, out)
             df = pd.read_csv(out)
@@ -386,7 +386,7 @@ class TestClean:
         row = {**VALID_FLIGHT, "AC Type": "BIG1"}
         csv = _make_raw_csv(tmp_path, [row])
 
-        with patch("roster_generator.clean_data._load_wake_map", return_value={"BIG1": "M/H"}):
+        with patch("roster_generator.data_cleaning.clean_data._load_wake_map", return_value={"BIG1": "M/H"}):
             out = tmp_path / "clean.csv"
             clean(csv, out)
             df = pd.read_csv(out)
