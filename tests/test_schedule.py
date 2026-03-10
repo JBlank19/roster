@@ -45,7 +45,7 @@ from roster_generator.schedule import (
     Flight,
     Aircraft,
     BIN_SIZE_MINS,
-    END_OF_DAY,
+    END_OF_DAY_MINS,
 )
 from roster_generator.config import PipelineConfig
 
