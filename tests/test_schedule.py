@@ -47,6 +47,7 @@ from roster_generator.schedule import (
     BIN_SIZE_MINS,
     END_OF_DAY_MINS,
 )
+from roster_generator.schedule.schedule import load_initial_conditions
 from roster_generator.config import PipelineConfig
 
 
@@ -230,6 +231,22 @@ def _run_schedule(tmp_path, ic_df=None, suffix="", seed=42) -> pd.DataFrame:
     return pd.read_csv(cfg.output_path("schedule"))
 
 
+def _build_data_manager(tmp_path, ic_df=None, seed=42) -> DataManager:
+    """Write standard inputs and return a DataManager for direct lookup tests."""
+    if ic_df is None:
+        ic_df = IC_STANDARD
+    cfg = _write_all_inputs(tmp_path, ic_df)
+    rng = random.Random(seed)
+    return DataManager(
+        rng,
+        cfg.output_path("routes"),
+        cfg.output_path("airports"),
+        cfg.analysis_path("markov"),
+        cfg.analysis_path("scheduled_turnaround_intraday_params"),
+        cfg.analysis_path("scheduled_turnaround_temporal_profile"),
+    )
+
+
 # ---------------------------------------------------------------------------
 # generate_schedule — software tests
 # ---------------------------------------------------------------------------
@@ -362,6 +379,137 @@ class TestGenerateScheduleSoftware:
         """Each aircraft from initial_conditions must appear in the output."""
         df = _run_schedule(tmp_path, ic_df=IC_TWO_AIRCRAFT)
         assert set(df["aircraft_id"]) == {"AC001", "AC002"}
+
+
+# ---------------------------------------------------------------------------
+# Targeted regression tests for refactor-sensitive paths
+# ---------------------------------------------------------------------------
+
+class TestScheduleRefactorGuards:
+
+    def test_destination_lookup_precedence(self, tmp_path):
+        """Primary exact > primary expanded > fallback expanded > return-to-origin."""
+        data = _build_data_manager(tmp_path, seed=123)
+
+        exact, source = data.get_destinations(
+            "IBE", "M", "EGLL", "LEMD", dep_utc_mins=8 * 60, arr_utc_mins=0
+        )
+        assert source == "primary_exact"
+        assert exact and exact[0][0] == "EGLL"
+
+        expanded, source = data.get_destinations(
+            "IBE", "M", "EGLL", "LEMD", dep_utc_mins=9 * 60, arr_utc_mins=0
+        )
+        assert source == "primary_expanded"
+        assert expanded and expanded[0][0] == "EGLL"
+
+        fallback, source = data.get_destinations(
+            "IBE", "M", "XXXX", "LEMD", dep_utc_mins=8 * 60, arr_utc_mins=0
+        )
+        assert source == "fallback_expanded"
+        assert fallback and fallback[0][0] == "EGLL"
+
+        ret, source = data.get_destinations(
+            "IBE", "M", "LEMD", "ZZZZ", dep_utc_mins=8 * 60, arr_utc_mins=0
+        )
+        assert source == "return_to_origin"
+        assert ret == [("LEMD", 1.0)]
+
+    def test_intraday_resample_guard_caps_to_max_intraday(self, tmp_path, monkeypatch):
+        """When intraday draws are always too large, turnaround is capped to max intraday."""
+        data = _build_data_manager(tmp_path, seed=7)
+        monkeypatch.setattr(data, "_sample_lognormal_minutes", lambda *_: END_OF_DAY_MINS)
+
+        arr_utc_mins = 600
+        ta, category = data.sample_turnaround_for_prev_origin(
+            op="IBE",
+            prev_origin="LEMD",
+            origin="EGLL",
+            wake="M",
+            arr_utc_mins=arr_utc_mins,
+        )
+
+        expected_max_intraday = END_OF_DAY_MINS - arr_utc_mins - BIN_SIZE_MINS
+        expected_max_intraday = int(
+            math.floor(expected_max_intraday / BIN_SIZE_MINS) * BIN_SIZE_MINS
+        )
+        assert category == "intraday"
+        assert ta == expected_max_intraday
+        assert data.turnaround_lookup_stats["intraday_resample_guard"] >= 1
+
+    def test_load_initial_conditions_allows_prior_only_without_std_sta(self, tmp_path):
+        """PRIOR_ONLY=1 rows may omit first-flight times."""
+        ic = pd.DataFrame(
+            [
+                {
+                    "AC_REG": "AC999",
+                    "AC_OPERATOR": "IBE",
+                    "AC_WAKE": "M",
+                    "ORIGIN": "",
+                    "DEST": "",
+                    "STD_UTC_MINS": np.nan,
+                    "STA_UTC_MINS": np.nan,
+                    "SINGLE_FLIGHT": 0,
+                    "PRIOR_ONLY": 1,
+                }
+            ]
+        )
+        ic_path = tmp_path / "initial_conditions.csv"
+        _write_csv(ic_path, ic)
+
+        aircraft_list = load_initial_conditions(ic_path)
+        assert len(aircraft_list) == 1
+        assert aircraft_list[0].is_prior_only
+        assert aircraft_list[0].initial_flight is None
+
+    def test_load_initial_conditions_raises_if_std_sta_missing_without_prior_only(self, tmp_path):
+        """Missing STD/STA must fail when PRIOR_ONLY is not set."""
+        ic = pd.DataFrame(
+            [
+                {
+                    "AC_REG": "AC998",
+                    "AC_OPERATOR": "IBE",
+                    "AC_WAKE": "M",
+                    "ORIGIN": "LEMD",
+                    "DEST": "EGLL",
+                    "STD_UTC_MINS": np.nan,
+                    "STA_UTC_MINS": np.nan,
+                    "SINGLE_FLIGHT": 0,
+                    "PRIOR_ONLY": 0,
+                }
+            ]
+        )
+        ic_path = tmp_path / "initial_conditions.csv"
+        _write_csv(ic_path, ic)
+
+        with pytest.raises(ValueError, match="missing STD_UTC_MINS/STA_UTC_MINS"):
+            load_initial_conditions(ic_path)
+
+    def test_generate_chain_counts_missing_turnaround_as_no_destination(self, tmp_path, monkeypatch):
+        """A missing turnaround sample increments no-destination single-flight counters."""
+        data = _build_data_manager(tmp_path, seed=11)
+        tracker = CapacityTracker({"LEMD": 999, "EGLL": 999}, {"LEMD": 999, "EGLL": 999})
+        stats = GenerationStats()
+        rng = random.Random(11)
+        generator = ScheduleGenerator(data, tracker, stats, rng)
+
+        aircraft = Aircraft(
+            reg="AC777",
+            operator="IBE",
+            wake="M",
+            initial_flight=Flight(orig="LEMD", dest="EGLL", std=480, sta=600),
+        )
+        assert generator.seed_initial_flights(aircraft)
+        monkeypatch.setattr(
+            data,
+            "sample_turnaround_for_prev_origin",
+            lambda **_: (-1, "missing"),
+        )
+
+        generator.generate_greedy_chain(aircraft)
+        assert stats.no_destinations == 1
+        assert stats.single_flight_total == 1
+        assert stats.single_flight_no_destinations == 1
 
 
 # ---------------------------------------------------------------------------

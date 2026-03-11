@@ -241,7 +241,7 @@ def generate_markov(config: PipelineConfig, airline_filter: str | None = None) -
     final_markov.to_csv(markov_path, index=False)
 
     phys_ta_path = config.output_path("phys_ta")
-    phys_ta_df = model._phys_ta_df.sort_values(["airline_id", "aircraft_wake"]).reset_index(drop=True)
+    phys_ta_df = model.phys_ta_df.sort_values(["airline_id", "aircraft_wake"]).reset_index(drop=True)
     phys_ta_df.to_csv(phys_ta_path, index=False)
 
     prior_rows = int(ic_df["PRIOR_STD_UTC_MINS"].notna().sum())
