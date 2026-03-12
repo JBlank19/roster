@@ -106,7 +106,7 @@ def _prepare_turnaround_events(
     """Build linked turnaround events and keep day_gap >= 0."""
     _require_columns(
         df,
-        [AC_REG_COL, AIRLINE_COL, DEP_STATION_COL, ARR_STATION_COL, STD_COL, STA_COL],
+        [AC_REG_COL, AIRLINE_COL, "AC_WAKE", DEP_STATION_COL, ARR_STATION_COL, STD_COL, STA_COL],
         "schedule",
     )
 
@@ -117,9 +117,7 @@ def _prepare_turnaround_events(
             df.loc[zzz_mask, AIRLINE_COL] = df.loc[zzz_mask, AC_REG_COL].astype(str).str.strip()
         print(f"  Remapped {zzz_count} flights: AC_OPER='ZZZ' -> AC_REG")
 
-    if "AC_WAKE" not in df.columns:
-        df["AC_WAKE"] = "M"
-    df["AC_WAKE"] = df["AC_WAKE"].fillna("M").astype(str).str.upper().str.strip()
+    df["AC_WAKE"] = df["AC_WAKE"].fillna("").astype(str).str.upper().str.strip()
 
     df[STD_COL] = parse_datetime_series_to_reftz(df[STD_COL], reftz)
     df[STA_COL] = parse_datetime_series_to_reftz(df[STA_COL], reftz)

@@ -2,7 +2,7 @@
 
 Covers
 ------
-- _prepare_flights(): ZZZ remapping, missing wake default, datetime parsing,
+- _prepare_flights(): ZZZ remapping, missing wake validation, datetime parsing,
   negative/zero duration filtering, both scheduled and actual time computation.
 - _build_per_operator_stats(): output structure, median correctness,
   group key composition.
@@ -145,16 +145,16 @@ class TestPrepareFlightsSoftware:
         df = _prepare_flights(_make_df(flights))
         assert (df[AIRLINE_COL] == "EC-ABC").all()
 
-    def test_missing_wake_defaults_to_m(self):
-        """When AC_WAKE column is absent, all wakes default to 'M'."""
+    def test_missing_wake_raises_error(self):
+        """When AC_WAKE column is absent, preprocessing should fail."""
         flights = [
             {AC_REG_COL: "AC001", AIRLINE_COL: "IBE",
              DEP_COL: "LEMD", ARR_COL: "EGLL",
              STD_COL: "2023-09-01 08:00", STA_COL: "2023-09-01 10:00",
              ATD_COL: "2023-09-01 08:05", ATA_COL: "2023-09-01 10:10"},
         ]
-        df = _prepare_flights(pd.DataFrame(flights))
-        assert (df[AC_WAKE_COL] == "M").all()
+        with pytest.raises(ValueError, match="Missing required columns in schedule"):
+            _prepare_flights(pd.DataFrame(flights))
 
     def test_unparseable_dates_dropped(self):
         """Rows with invalid datetime strings are removed."""

@@ -47,7 +47,7 @@ def _prepare_flights(df: pd.DataFrame, reftz: str = DEFAULT_REFTZ) -> pd.DataFra
     """Normalise columns, remap ZZZ airlines, compute flight durations."""
     _require_columns(
         df,
-        [AC_REG_COL, AIRLINE_COL, DEP_COL, ARR_COL, STD_COL, STA_COL, ATD_COL, ATA_COL],
+        [AC_REG_COL, AIRLINE_COL, AC_WAKE_COL, DEP_COL, ARR_COL, STD_COL, STA_COL, ATD_COL, ATA_COL],
         "schedule",
     )
 
@@ -59,10 +59,7 @@ def _prepare_flights(df: pd.DataFrame, reftz: str = DEFAULT_REFTZ) -> pd.DataFra
             df.loc[zzz_mask, AIRLINE_COL] = df.loc[zzz_mask, AC_REG_COL].astype(str).str.strip()
         print(f"  Remapped {zzz_count} flights: AC_OPER='ZZZ' -> AC_REG")
 
-    # Default missing wake to M
-    if AC_WAKE_COL not in df.columns:
-        df[AC_WAKE_COL] = "M"
-    df[AC_WAKE_COL] = df[AC_WAKE_COL].fillna("M").astype(str).str.upper().str.strip()
+    df[AC_WAKE_COL] = df[AC_WAKE_COL].fillna("").astype(str).str.upper().str.strip()
 
     # Parse times (scheduled + actual)
     for col in [STD_COL, STA_COL, ATD_COL, ATA_COL]:

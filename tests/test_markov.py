@@ -4,7 +4,7 @@ Covers
 ------
 - _to_minute_bin_preserve_day(): positive rounding, negative flooring, zero, float input.
 - _prepare_base_flights(): ZZZ remapping, uppercasing, stripping, datetime parsing,
-  same-airport removal, airline filter, ValueError on empty result.
+  same-airport removal, airline filter, missing-column and empty-result errors.
 - _build_markov_tables(): return structure, expected columns, primary/fallback separation,
   probability normalisation, positive counts, hour stratification, memory property,
   fallback memorylessness, count conservation, no self-loops.
@@ -172,6 +172,21 @@ class TestPrepareBaseFlights:
         df = _prepare_base_flights(_make_base_df(flights), airline_filter="IBE")
         assert len(df) == 1
         assert df.iloc[0][AIRLINE_COL] == "IBE"
+
+    def test_missing_wake_raises_error(self):
+        """AC_WAKE is required by the schedule contract."""
+        flights = [
+            {
+                AC_REG_COL: "AC001",
+                AIRLINE_COL: "IBE",
+                DEP_COL: "LEMD",
+                ARR_COL: "EGLL",
+                STD_COL: "2023-09-01 08:00",
+                STA_COL: "2023-09-01 10:00",
+            },
+        ]
+        with pytest.raises(ValueError, match="Missing required columns in schedule"):
+            _prepare_base_flights(pd.DataFrame(flights))
 
     def test_raises_when_no_usable_flights(self):
         """ValueError raised when all flights are filtered out."""

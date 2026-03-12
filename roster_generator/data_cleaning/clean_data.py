@@ -27,7 +27,6 @@ FINAL_COLUMNS = [
     "STA_REFTZ",
     "ATD_REFTZ",
     "ATA_REFTZ",
-    "AC_TYPE",
     "AC_OPER",
     "AC_REG",
     "AC_WAKE",

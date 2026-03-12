@@ -76,12 +76,12 @@ def _prepare_base_flights(
 ):
     """Normalise raw schedule columns, apply filters, and drop unusable rows.
 
-    Handles the "ZZZ" sentinel airline (remaps to AC_REG), defaults missing
-    wake categories to "M", and removes same-airport flights.
+    Handles the "ZZZ" sentinel airline (remaps to AC_REG), normalises wake
+    categories, and removes same-airport flights.
     """
     _require_columns(
         df,
-        [AC_REG_COL, AIRLINE_COL, DEP_COL, ARR_COL, STD_COL, STA_COL],
+        [AC_REG_COL, AIRLINE_COL, AC_WAKE_COL, DEP_COL, ARR_COL, STD_COL, STA_COL],
         "schedule",
     )
 
@@ -93,14 +93,10 @@ def _prepare_base_flights(
             df.loc[zzz_mask, AIRLINE_COL] = df.loc[zzz_mask, AC_REG_COL].astype(str).str.strip()
         print(f"  Remapped {zzz_count} flights: AC_OPER='ZZZ' -> AC_REG")
 
-    for c in [AC_REG_COL, AIRLINE_COL, AC_WAKE_COL, DEP_COL, ARR_COL]:
-        if c in df.columns:
-            df[c] = df[c].fillna("").astype(str).str.strip()
-
-    if AIRLINE_COL in df.columns:
-        df[AIRLINE_COL] = df[AIRLINE_COL].str.upper()
-    if AC_WAKE_COL in df.columns:
-        df[AC_WAKE_COL] = df[AC_WAKE_COL].str.upper()
+    for c in [AC_REG_COL, AIRLINE_COL, DEP_COL, ARR_COL]:
+        df[c] = df[c].fillna("").astype(str).str.strip()
+    df[AIRLINE_COL] = df[AIRLINE_COL].str.upper()
+    df[AC_WAKE_COL] = df[AC_WAKE_COL].fillna("").astype(str).str.strip().str.upper()
 
     df["STD"] = parse_datetime_series_to_reftz(df[STD_COL], reftz)
     df["STA"] = parse_datetime_series_to_reftz(df[STA_COL], reftz)

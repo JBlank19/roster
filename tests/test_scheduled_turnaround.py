@@ -6,7 +6,7 @@ Covers
 - _fit_lognormal_params(): single/two/multi-sample fitting, zero/negative filtering,
   empty input, deterministic fallbacks.
 - _encode_sparse_hist(): zero-suppression, correct minute labels, round-trip format.
-- _prepare_turnaround_events(): ZZZ remapping, missing wake default, datetime parsing,
+- _prepare_turnaround_events(): ZZZ remapping, missing wake validation, datetime parsing,
   linked-flight construction, day_gap filtering, category assignment, arrival binning.
 - _build_param_and_temporal_rows(): return structure (2 lists), intraday keying by (airline, wake),
   temporal keying by route, histogram consistency.
@@ -281,8 +281,8 @@ class TestPrepareTurnaroundEventsSoftware:
         events = _prepare_turnaround_events(_make_df(flights))
         assert (events["airline"] == "EC-ABC").all()
 
-    def test_missing_wake_defaults_to_m(self):
-        """When AC_WAKE column is absent, all wakes default to 'M'."""
+    def test_missing_wake_raises_error(self):
+        """When AC_WAKE column is absent, preprocessing should fail."""
         flights = [
             {AC_REG_COL: "AC001", AIRLINE_COL: "IBE",
              DEP_STATION_COL: "LEMD", ARR_STATION_COL: "EGLL",
@@ -291,8 +291,8 @@ class TestPrepareTurnaroundEventsSoftware:
              DEP_STATION_COL: "EGLL", ARR_STATION_COL: "LFPG",
              STD_COL: "2023-09-01 12:00", STA_COL: "2023-09-01 13:30"},
         ]
-        events = _prepare_turnaround_events(pd.DataFrame(flights))
-        assert (events["wake"] == "M").all()
+        with pytest.raises(ValueError, match="Missing required columns in schedule"):
+            _prepare_turnaround_events(pd.DataFrame(flights))
 
     def test_unparseable_dates_dropped(self):
         """Rows with invalid datetime strings are removed before linking."""

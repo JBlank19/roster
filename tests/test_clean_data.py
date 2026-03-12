@@ -6,7 +6,7 @@ Covers
   tz-naive output, missing/invalid timezones, index preservation, empty input.
 - clean(): output file creation, column renaming/dropping, invalid airport
   filtering, missing registration filtering, date parsing (dayfirst),
-  AC_TYPE normalisation, local time offsets, AC_WAKE mapping
+  AC_WAKE mapping from AC Type,
   output date format, tolerance for missing optional columns.
 """
 
@@ -234,7 +234,6 @@ class TestClean:
             "STA_REFTZ",
             "ATD_REFTZ",
             "ATA_REFTZ",
-            "AC_TYPE",
             "AC_OPER",
             "AC_REG",
             "AC_WAKE",
@@ -297,14 +296,16 @@ class TestClean:
         assert df.iloc[0]["STD_REFTZ"].month == 9
         assert df.iloc[0]["STD_REFTZ"].day == 15
 
-    def test_ac_type_stripped_and_uppercased(self, tmp_path):
-        """AC_TYPE values should be stripped of whitespace and uppercased."""
+    def test_ac_wake_derived_from_normalized_ac_type(self, tmp_path):
+        """AC_WAKE should be derived from stripped/uppercased raw AC Type."""
         row = {**VALID_FLIGHT, "AC Type": "  a320  "}
         csv = _make_raw_csv(tmp_path, [row])
-        out = tmp_path / "clean.csv"
-        clean(csv, out)
-        df = pd.read_csv(out)
-        assert df.iloc[0]["AC_TYPE"] == "A320"
+        with patch("roster_generator.data_cleaning.clean_data._load_wake_map", return_value={"A320": "M"}):
+            out = tmp_path / "clean.csv"
+            clean(csv, out)
+            df = pd.read_csv(out)
+            assert df.iloc[0]["AC_WAKE"] == "M"
+            assert "AC_TYPE" not in df.columns
 
     def test_local_time_columns_not_emitted(self, tmp_path):
         """Cleaned output must not contain local-time columns."""
