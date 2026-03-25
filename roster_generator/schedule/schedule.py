@@ -189,11 +189,9 @@ def run_generation(
     print("[Schedule] Seeding initial flights...")
     needs_greedy = _seed_and_collect_needs_greedy(aircraft_list, generator)
 
-    initial_burst, initial_rolling = tracker.compute_violations()
     initial_flights = sum(len(ac.chain) for ac in aircraft_list)
     print(
-        f"[Schedule]   Seeded {initial_flights} initial flights | "
-        f"Initial violations: burst={initial_burst}, rolling={initial_rolling}"
+        f"[Schedule]   Seeded {initial_flights} initial flights"
     )
 
     print(f"[Schedule] Generating greedy chains for {len(needs_greedy)} aircraft...")
@@ -203,10 +201,8 @@ def run_generation(
         stats.total_flights = sum(len(a.chain) for a in aircraft_list)
 
         if index % 1000 == 0:
-            burst, rolling = tracker.compute_violations()
             print(
-                f"[Schedule]   {index}/{len(needs_greedy)} | Flights: {stats.total_flights} | "
-                f"Violations: burst={burst}, rolling={rolling}"
+                f"[Schedule]   {index}/{len(needs_greedy)} | Flights: {stats.total_flights}"
             )
 
     greedy_ids = {id(ac) for ac in needs_greedy}
