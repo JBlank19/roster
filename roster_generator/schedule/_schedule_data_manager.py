@@ -231,7 +231,7 @@ class DataManager:
 
     def _load_turnaround_data(self) -> None:
         """Load turnaround parameters and temporal profiles."""
-        self.turnaround_intraday_params: Dict[Tuple[str, str], Tuple[float, float]] = {}
+        self.turnaround_intraday_params: Dict[Tuple[str, str], tuple] = {}
         self.turnaround_temporal_profiles: Dict[tuple, Tuple[Dict[int, float], Dict[int, float]]] = {}
         self.turnaround_temporal_totals: Dict[tuple, Tuple[float, float]] = {}
         self.turnaround_temporal_next_prob: Dict[Tuple[str, str], np.ndarray] = {}
@@ -288,10 +288,14 @@ class DataManager:
             airline, wake = key
             location, shape = self.turnaround_intraday_params[key]
             result = self._manipulation_fn(
-                {"location": location, "shape": shape},
+                {"location": location, "shape": shape, "shift": 0.0},
                 f"turnaround_intraday {airline} {wake}",
             )
-            self.turnaround_intraday_params[key] = (result["location"], result["shape"])
+            self.turnaround_intraday_params[key] = (
+                result["location"],
+                result["shape"],
+                result.get("shift", 0.0),
+            )
 
     def _apply_route_manipulation(self) -> None:
         """Apply manipulation_fn to route scheduled times."""
@@ -528,9 +532,16 @@ class DataManager:
         self.turnaround_lookup_stats["temporal_missing_exact"] += 1
         return None, "none"
 
-    def _sample_lognormal_minutes(self, location: float, shape: float) -> int:
-        """Sample turnaround in minutes and clamp to BIN_SIZE_MINS."""
+    def _sample_lognormal_minutes(
+        self, location: float, shape: float, shift: float = 0.0,
+    ) -> int:
+        """Sample turnaround in minutes and clamp to BIN_SIZE_MINS.
+
+        The optional *shift* displaces the entire distribution by a fixed
+        number of minutes in real-space, preserving its shape.
+        """
         draw = self.rng.lognormvariate(float(location), float(max(shape, 1e-6)))
+        draw += shift
         ta = int(round(max(0.0, draw) / BIN_SIZE_MINS) * BIN_SIZE_MINS)
         return max(BIN_SIZE_MINS, ta)
 
@@ -576,7 +587,7 @@ class DataManager:
         if key is None:
             return -1, "missing"
 
-        location, shape = self.turnaround_intraday_params[key]
+        location, shape, shift = self.turnaround_intraday_params[key]
 
         max_intraday = self.window_length_mins - int(arr_utc_mins) - BIN_SIZE_MINS
         max_intraday = int(math.floor(max_intraday / BIN_SIZE_MINS) * BIN_SIZE_MINS)
@@ -584,7 +595,7 @@ class DataManager:
             return self._build_next_day_turnaround(arr_utc_mins), "next_day"
 
         for _ in range(MAX_INTRADAY_RESAMPLE_ATTEMPTS):
-            sampled = self._sample_lognormal_minutes(location, shape)
+            sampled = self._sample_lognormal_minutes(location, shape, shift)
             if sampled <= max_intraday:
                 return sampled, "intraday"
 

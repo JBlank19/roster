@@ -17,7 +17,7 @@ Available distributions and their params/dtype formats:
 
     Distribution                 dtype example                       params keys
     -------------------------    ----------------------------------  ----------------
-    Turnaround intraday          "turnaround_intraday IBE H"         location, shape
+    Turnaround intraday          "turnaround_intraday IBE H"         location, shape, shift
     Fleet size                   "fleet_size IBE H"                  mu, sigma
     Physical turnaround min      "phys_ta_min IBE H"                 min_turnaround
     Route duration               "route_duration LEBL LEMD IBE H"   scheduled_time
@@ -53,33 +53,45 @@ def my_manipulation(params: dict[str, float], dtype: str) -> dict[str, float]:
     or routes.
     """
 
-    # --- Example 1: Global turnaround manipulation ---
-    # Increase all turnaround location (log-space mean) by 20%.
-    # This makes turnarounds ~20% longer on average.
+    # --- Example 1: Shift turnarounds by a fixed amount ---
+    # Add 5 minutes to all turnarounds while preserving distribution shape.
+    # The "shift" parameter displaces the entire lognormal distribution
+    # in real-space (minutes), so every sampled turnaround is 5 min longer.
     if dtype.startswith("turnaround_intraday"):
-        params["location"] *= 1.2
+        params["shift"] = 5.0
 
-    # --- Example 2: Batch targeting by airline ---
+    # --- Example 2: Scale turnaround location (log-space mean) ---
+    # IMPORTANT: "location" is the log-space mean (mu) of the lognormal
+    # distribution: samples ~ exp(N(location, shape^2)).
+    # This means location is NOT in minutes — it's in log-minutes.
+    # Multiplying location by 1.2 does NOT add 20% to turnaround times;
+    # it raises the geometric mean to the power 1.2, which can be a
+    # much larger effect than expected.
+    # If you want to add a fixed number of minutes, use "shift" instead.
+    # if dtype.startswith("turnaround_intraday"):
+    #     params["location"] *= 1.2
+
+    # --- Example 3: Batch targeting by airline ---
     # Override fleet size mean for all RYR (Ryanair) wake categories.
     # if dtype.startswith("fleet_size") and "RYR" in dtype:
     #     params["mu"] = 25.0
 
-    # --- Example 3: Single target (airline + wake) ---
+    # --- Example 4: Single target (airline + wake) ---
     # Double the fleet sigma for IBE Heavy specifically.
     # if dtype == "fleet_size IBE H":
     #     params["sigma"] *= 2.0
 
-    # --- Example 4: Route-level manipulation ---
+    # --- Example 5: Route-level manipulation ---
     # Add 10 minutes to all route durations departing from LEBL.
     # if dtype.startswith("route_duration LEBL"):
     #     params["scheduled_time"] += 10.0
 
-    # --- Example 5: Modify physical turnaround minimum ---
+    # --- Example 6: Modify physical turnaround minimum ---
     # Set a global minimum turnaround of 30 minutes.
     # if dtype.startswith("phys_ta_min"):
     #     params["min_turnaround"] = max(params["min_turnaround"], 30.0)
 
-    # --- Example 6: Reduce prior-day probability for Heavy aircraft ---
+    # --- Example 7: Reduce prior-day probability for Heavy aircraft ---
     # if dtype.startswith("p_prior") and dtype.endswith("H"):
     #     params["probability"] *= 0.5
 
