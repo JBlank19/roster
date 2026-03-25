@@ -272,6 +272,7 @@ def generate_markov(config: PipelineConfig, airline_filter: str | None = None) -
     )
     model.build_all()
     model.set_markov_tables(markov_hourly, markov_fallback_hourly)
+    model.apply_manipulation(config.manipulation_fn)
 
     ic_df = model.sample_initial_conditions()
 

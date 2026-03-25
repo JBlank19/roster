@@ -260,6 +260,7 @@ def generate_schedule(config: PipelineConfig) -> None:
         paths["turnaround_intraday"],
         paths["turnaround_temporal"],
         window_length_mins=config.window_length_mins,
+        manipulation_fn=config.manipulation_fn,
     )
 
     aircraft_list = load_initial_conditions(paths["initial_conditions"])

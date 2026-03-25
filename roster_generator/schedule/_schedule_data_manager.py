@@ -29,6 +29,7 @@ class DataManager:
         turnaround_intraday_params_path: Path,
         turnaround_temporal_profile_path: Path,
         window_length_mins: int = END_OF_DAY_MINS,
+        manipulation_fn: Optional[callable] = None,
     ):
         self.rng = rng
         self.routes_path = routes_path
@@ -38,6 +39,7 @@ class DataManager:
         self.turnaround_temporal_profile_path = turnaround_temporal_profile_path
         self.window_length_mins = int(window_length_mins)
         self.hour_bins = max(1, self.window_length_mins // P_NEXT_BIN_SIZE_MINS)
+        self._manipulation_fn = manipulation_fn or (lambda params, dtype: params)
 
         self.turnaround_lookup_stats: Dict[str, int] = defaultdict(int)
         self._load_all()
@@ -258,6 +260,7 @@ class DataManager:
         )
 
         self.turnaround_intraday_params = self._load_intraday_params(intraday_df)
+        self._apply_turnaround_manipulation()
         (
             self.turnaround_temporal_profiles,
             self.turnaround_temporal_totals,
@@ -277,6 +280,28 @@ class DataManager:
         for row in routes_df.itertuples():
             key = (row.orig_id, row.dest_id, row.airline_id, row.wake_type)
             self.routes[key] = int(row.scheduled_time)
+        self._apply_route_manipulation()
+
+    def _apply_turnaround_manipulation(self) -> None:
+        """Apply manipulation_fn to turnaround intraday lognormal parameters."""
+        for key in list(self.turnaround_intraday_params.keys()):
+            airline, wake = key
+            location, shape = self.turnaround_intraday_params[key]
+            result = self._manipulation_fn(
+                {"location": location, "shape": shape},
+                f"turnaround_intraday {airline} {wake}",
+            )
+            self.turnaround_intraday_params[key] = (result["location"], result["shape"])
+
+    def _apply_route_manipulation(self) -> None:
+        """Apply manipulation_fn to route scheduled times."""
+        for key in list(self.routes.keys()):
+            origin, dest, airline, wake = key
+            result = self._manipulation_fn(
+                {"scheduled_time": float(self.routes[key])},
+                f"route_duration {origin} {dest} {airline} {wake}",
+            )
+            self.routes[key] = int(round(result["scheduled_time"]))
 
     def _load_airport_data(self) -> None:
         """Load airport capacity limits and timezone offsets."""

@@ -2,6 +2,7 @@
 
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Callable
 
 from .time_window import (
     DEFAULT_ACTUAL_TIMES,
@@ -14,6 +15,13 @@ from .time_window import (
     validate_window_start,
     window_start_to_minutes,
 )
+
+ManipulationFn = Callable[[dict[str, float], str], dict[str, float]]
+
+
+def _default_manipulation(params: dict[str, float], dtype: str) -> dict[str, float]:
+    """Identity manipulation: returns parameters unchanged."""
+    return params
 
 
 @dataclass
@@ -51,6 +59,7 @@ class PipelineConfig:
     window_start: str = DEFAULT_WINDOW_START
     window_length_hours: int = DEFAULT_WINDOW_LENGTH_HOURS
     actual_times: bool = DEFAULT_ACTUAL_TIMES
+    manipulation_fn: ManipulationFn = field(default=_default_manipulation, repr=False)
     window_start_mins: int = field(init=False)
     window_length_mins: int = field(init=False)
 

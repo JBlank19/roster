@@ -102,6 +102,41 @@ class InitialConditionModel:
         """Compatibility wrapper around physical-turnaround lookup."""
         return get_phys_ta_min(self._state, airline, wake)
 
+    def apply_manipulation(self, manipulation_fn: callable) -> None:
+        """Apply a user-defined manipulation function to fitted distributions.
+
+        Must be called after build_all() / set_markov_tables() and before
+        sample_initial_conditions().
+        """
+        state = self._state
+
+        for key in list(state.daily_fleet_stats.keys()):
+            airline, wake = key
+            mu, sigma = state.daily_fleet_stats[key]
+            result = manipulation_fn(
+                {"mu": mu, "sigma": sigma},
+                f"fleet_size {airline} {wake}",
+            )
+            state.daily_fleet_stats[key] = (result["mu"], result["sigma"])
+
+        for key in list(state.phys_ta_min.keys()):
+            airline, wake = key
+            result = manipulation_fn(
+                {"min_turnaround": float(state.phys_ta_min[key])},
+                f"phys_ta_min {airline} {wake}",
+            )
+            state.phys_ta_min[key] = int(round(result["min_turnaround"]))
+
+        for key in list(state.p_prior.keys()):
+            airline, wake = key
+            result = manipulation_fn(
+                {"probability": state.p_prior[key]},
+                f"p_prior {airline} {wake}",
+            )
+            state.p_prior[key] = result["probability"]
+
+        self._sync_legacy_attrs()
+
     def sample_initial_conditions(self) -> pd.DataFrame:
         """Generate one synthetic day-0 fleet and validate invariants."""
         ic_df = sample_initial_conditions(self._state, self.rng)
