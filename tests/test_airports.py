@@ -62,6 +62,37 @@ def _make_markov(dep_airports, arr_airports) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
+def _make_markov_combined(dep_airports, arr_airports) -> pd.DataFrame:
+    """Build a combined Markov CSV DataFrame with primary and fallback rows."""
+    rows = []
+    for dep, arr in zip(dep_airports, arr_airports):
+        rows.append({
+            "TABLE_KIND": "primary",
+            DEP_COL: dep,
+            ARR_COL: arr,
+            "AC_OPER": "IBE",
+            "AC_WAKE": "M",
+            "PREV_ICAO": "ZZZZ",
+            "DEP_HOUR_REFTZ": 8,
+            "PROB": 1.0,
+            "COUNT": 1,
+            "WEIGHT": 1.0,
+        })
+        rows.append({
+            "TABLE_KIND": "fallback",
+            DEP_COL: dep,
+            ARR_COL: arr,
+            "AC_OPER": "IBE",
+            "AC_WAKE": "M",
+            "PREV_ICAO": "",
+            "DEP_HOUR_REFTZ": 8,
+            "PROB": 1.0,
+            "COUNT": 1,
+            "WEIGHT": 1.0,
+        })
+    return pd.DataFrame(rows)
+
+
 def _write_csv(path, df: pd.DataFrame) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     df.to_csv(path, index=False)
@@ -204,6 +235,12 @@ class TestGenerateAirports:
         _write_csv(path, df)
         return path
 
+    def _write_combined_markov(self, tmp_path, deps, arrs, suffix=""):
+        df = _make_markov_combined(deps, arrs)
+        path = tmp_path / "analysis" / f"markov{suffix}.csv"
+        _write_csv(path, df)
+        return path
+
     def _write_schedule(self, tmp_path):
         path = tmp_path / "schedule.csv"
         DENSE_SCHEDULE.to_csv(path, index=False)
@@ -262,6 +299,14 @@ class TestGenerateAirports:
         generate_airports(cfg)
         df = pd.read_csv(tmp_path / "output" / "airports.csv")
         assert list(df.columns) == ["airport_id", "rolling_capacity", "burst_capacity"]
+
+    def test_accepts_combined_markov_csv(self, tmp_path):
+        """Airport extraction should accept combined primary/fallback Markov exports."""
+        self._write_combined_markov(tmp_path, ["LEMD", "EGLL"], ["EGLL", "LFPG"])
+        cfg = self._make_config(tmp_path)
+        generate_airports(cfg)
+        df = pd.read_csv(tmp_path / "output" / "airports.csv")
+        assert set(df["airport_id"]) == {"LEMD", "EGLL", "LFPG"}
 
     def test_fallback_columns_when_no_schedule(self, tmp_path):
         """When the schedule file is absent, floor columns must still be present."""

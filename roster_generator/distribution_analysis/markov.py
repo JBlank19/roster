@@ -13,7 +13,7 @@ The public entry point ``generate_markov`` orchestrates both the Markov build
 and the initial condition sampling (delegated to ``InitialConditionModel``).
 
 Outputs:
-  - markov{suffix}.csv (DEP_HOUR_REFTZ)
+  - markov{suffix}.csv (primary + fallback rows, DEP_HOUR_REFTZ)
   - initial_conditions{suffix}.csv
   - phys_ta{suffix}.csv
 """
@@ -21,11 +21,12 @@ Outputs:
 from __future__ import annotations
 
 import random
+from types import MappingProxyType
 
 import numpy as np
 import pandas as pd
 
-from roster_generator.config import PipelineConfig
+from roster_generator.config import MarkovContext, PipelineConfig
 from roster_generator.time_window import (
     DEFAULT_REFTZ,
     DEFAULT_WINDOW_LENGTH_HOURS,
@@ -45,6 +46,25 @@ DEP_COL = "DEP_ICAO"
 ARR_COL = "ARR_ICAO"
 STD_COL = "STD_REFTZ"
 STA_COL = "STA_REFTZ"
+TABLE_KIND_COL = "TABLE_KIND"
+PREV_COL = "PREV_ICAO"
+HOUR_COL = "DEP_HOUR_REFTZ"
+COUNT_COL = "COUNT"
+WEIGHT_COL = "WEIGHT"
+PROB_COL = "PROB"
+
+MARKOV_EXPORT_COLUMNS = [
+    TABLE_KIND_COL,
+    AIRLINE_COL,
+    AC_WAKE_COL,
+    PREV_COL,
+    DEP_COL,
+    ARR_COL,
+    HOUR_COL,
+    COUNT_COL,
+    WEIGHT_COL,
+    PROB_COL,
+]
 
 
 # --- Helpers ---
@@ -127,85 +147,202 @@ def _prepare_base_flights(
 
 # --- Markov table construction ---
 
-def _build_markov_tables(base_df):
-    """Build primary and fallback hourly transition tables.
-
-    Returns:
-        final_markov: DataFrame with per-row transition probabilities (for CSV export).
-        markov_hourly: nested dict  (op, wake, prev, dep) -> hour -> {arr: count}
-        markov_fallback_hourly: nested dict  (op, wake, dep) -> hour -> {arr: count}
-    """
+def _prepare_markov_source(base_df: pd.DataFrame) -> pd.DataFrame:
+    """Sort flights and derive previous-origin/hour columns used by Markov tables."""
     df = base_df.sort_values(by=[AC_REG_COL, "STD"]).reset_index(drop=True).copy()
+    df[PREV_COL] = df.groupby(AC_REG_COL, sort=False)[DEP_COL].shift(1)
+    if HOUR_COL not in df.columns:
+        df[HOUR_COL] = df["STD"].dt.hour
+    return df
 
-    # Previous departure airport within each aircraft's chain
-    df["PREV_ICAO"] = df.groupby(AC_REG_COL, sort=False)[DEP_COL].shift(1)
-    if "DEP_HOUR_REFTZ" not in df.columns:
-        df["DEP_HOUR_REFTZ"] = df["STD"].dt.hour
 
-    # --- Primary table: conditioned on previous origin ---
-    primary_df = df[df["PREV_ICAO"].notna()].copy()
-    markov_grp = (
-        primary_df.groupby([AIRLINE_COL, AC_WAKE_COL, "PREV_ICAO", DEP_COL, ARR_COL, "DEP_HOUR_REFTZ"], sort=False)
+def _build_primary_markov_counts(df: pd.DataFrame) -> pd.DataFrame:
+    """Aggregate primary Markov counts with previous-origin memory."""
+    primary_df = df[df[PREV_COL].notna()].copy()
+    if primary_df.empty:
+        return pd.DataFrame(columns=MARKOV_EXPORT_COLUMNS)
+
+    grouped = (
+        primary_df.groupby(
+            [AIRLINE_COL, AC_WAKE_COL, PREV_COL, DEP_COL, ARR_COL, HOUR_COL],
+            sort=False,
+        )
         .size()
-        .reset_index(name="COUNT")
+        .reset_index(name=COUNT_COL)
     )
+    grouped[TABLE_KIND_COL] = "primary"
+    grouped[WEIGHT_COL] = grouped[COUNT_COL].astype(float)
+    totals = grouped.groupby(
+        [TABLE_KIND_COL, AIRLINE_COL, AC_WAKE_COL, PREV_COL, DEP_COL, HOUR_COL],
+        sort=False,
+    )[WEIGHT_COL].transform("sum")
+    grouped[PROB_COL] = grouped[WEIGHT_COL] / totals
+    return grouped[MARKOV_EXPORT_COLUMNS].copy()
 
-    totals = markov_grp.groupby([AIRLINE_COL, AC_WAKE_COL, "PREV_ICAO", DEP_COL, "DEP_HOUR_REFTZ"])["COUNT"].transform("sum")
-    markov_grp["PROB"] = markov_grp["COUNT"] / totals
 
-    final_markov = markov_grp[[
-        AIRLINE_COL,
-        AC_WAKE_COL,
-        "PREV_ICAO",
-        DEP_COL,
-        ARR_COL,
-        "DEP_HOUR_REFTZ",
-        "PROB",
-        "COUNT",
-    ]].copy()
+def _build_fallback_markov_counts(df: pd.DataFrame) -> pd.DataFrame:
+    """Aggregate fallback Markov counts without previous-origin memory."""
+    grouped = (
+        df.groupby([AIRLINE_COL, AC_WAKE_COL, DEP_COL, ARR_COL, HOUR_COL], sort=False)
+        .size()
+        .reset_index(name=COUNT_COL)
+    )
+    grouped[TABLE_KIND_COL] = "fallback"
+    grouped[PREV_COL] = ""
+    grouped[WEIGHT_COL] = grouped[COUNT_COL].astype(float)
+    totals = grouped.groupby(
+        [TABLE_KIND_COL, AIRLINE_COL, AC_WAKE_COL, PREV_COL, DEP_COL, HOUR_COL],
+        sort=False,
+    )[WEIGHT_COL].transform("sum")
+    grouped[PROB_COL] = grouped[WEIGHT_COL] / totals
+    return grouped[MARKOV_EXPORT_COLUMNS].copy()
 
-    # Pack into nested dicts for fast runtime lookup
+
+def _validate_markov_bias_map(
+    bias_map: object,
+    base_probs: dict[str, float],
+    context: MarkovContext,
+) -> dict[str, float]:
+    """Validate user Markov biases and default missing destinations to 1.0."""
+    if bias_map is None:
+        return {dest: 1.0 for dest in base_probs}
+    if not isinstance(bias_map, dict):
+        raise ValueError(
+            f"Invalid Markov manipulation for {context.table_kind} "
+            f"{context.airline} {context.origin} hour {context.dep_hour_reftz}: "
+            f"expected dict or None, got {type(bias_map).__name__}"
+        )
+
+    unknown = sorted(set(bias_map.keys()) - set(base_probs.keys()))
+    if unknown:
+        raise ValueError(
+            f"Unknown Markov destinations for {context.table_kind} "
+            f"{context.airline} {context.origin} hour {context.dep_hour_reftz}: {unknown}"
+        )
+
+    out: dict[str, float] = {dest: 1.0 for dest in base_probs}
+    for dest, raw_bias in bias_map.items():
+        bias = float(raw_bias)
+        if not np.isfinite(bias) or bias <= 0:
+            raise ValueError(
+                f"Invalid Markov bias for destination {dest!r}: {raw_bias!r}. "
+                "Biases must be finite and strictly positive."
+            )
+        out[str(dest)] = bias
+    return out
+
+
+def _apply_markov_manipulation(
+    grouped_df: pd.DataFrame,
+    markov_manipulation_fn,
+) -> pd.DataFrame:
+    """Apply row-wise support-preserving Markov manipulation."""
+    if grouped_df.empty:
+        return grouped_df.reindex(columns=MARKOV_EXPORT_COLUMNS).copy()
+
+    output_frames: list[pd.DataFrame] = []
+    group_cols = [TABLE_KIND_COL, AIRLINE_COL, AC_WAKE_COL, PREV_COL, DEP_COL, HOUR_COL]
+
+    for group_key, frame in grouped_df.groupby(group_cols, sort=False, dropna=False):
+        table_kind, airline, wake, prev_origin, origin, dep_hour = group_key
+        base_counts = {
+            str(row.ARR_ICAO): int(row.COUNT)
+            for row in frame.itertuples(index=False)
+        }
+        total_count = float(sum(base_counts.values()))
+        if total_count <= 0:
+            raise ValueError(f"Invalid Markov row with non-positive total count: {group_key}")
+
+        base_probs = {
+            dest: float(count / total_count)
+            for dest, count in base_counts.items()
+        }
+        normalized_prev = None if str(table_kind) == "fallback" else str(prev_origin)
+        context = MarkovContext(
+            table_kind=str(table_kind),
+            airline=str(airline),
+            wake=str(wake),
+            prev_origin=normalized_prev,
+            origin=str(origin),
+            dep_hour_reftz=int(dep_hour),
+            base_probs=MappingProxyType(base_probs.copy()),
+            base_counts=MappingProxyType(base_counts.copy()),
+        )
+        bias_map = _validate_markov_bias_map(
+            markov_manipulation_fn(dict(base_probs), context),
+            base_probs,
+            context,
+        )
+
+        frame = frame.copy()
+        frame[WEIGHT_COL] = frame.apply(
+            lambda row: float(row[COUNT_COL]) * bias_map[str(row[ARR_COL])],
+            axis=1,
+        )
+        total_weight = float(frame[WEIGHT_COL].sum())
+        if total_weight <= 0:
+            raise ValueError(f"Invalid Markov row with non-positive total weight: {group_key}")
+        frame[PROB_COL] = frame[WEIGHT_COL] / total_weight
+        output_frames.append(frame[MARKOV_EXPORT_COLUMNS])
+
+    return pd.concat(output_frames, ignore_index=True)
+
+
+def _pack_markov_tables(markov_df: pd.DataFrame):
+    """Pack Markov CSV rows into runtime lookup tables using WEIGHT values."""
     markov_hourly = {}
     markov_fallback_hourly = {}
 
-    for row in final_markov.itertuples(index=False):
+    if markov_df.empty:
+        return markov_hourly, markov_fallback_hourly
+
+    for row in markov_df.itertuples(index=False):
+        table_kind = getattr(row, TABLE_KIND_COL, "primary")
         op = str(row.AC_OPER)
         wake = str(row.AC_WAKE)
         prev = str(row.PREV_ICAO)
         dep = str(row.DEP_ICAO)
         arr = str(row.ARR_ICAO)
-        hour = int(row.DEP_HOUR_REFTZ)
-        cnt = int(row.COUNT)
+        hour = int(getattr(row, HOUR_COL))
+        weight = float(getattr(row, WEIGHT_COL, getattr(row, COUNT_COL)))
+
+        if table_kind == "fallback":
+            fkey = (op, wake, dep)
+            if fkey not in markov_fallback_hourly:
+                markov_fallback_hourly[fkey] = {}
+            if hour not in markov_fallback_hourly[fkey]:
+                markov_fallback_hourly[fkey][hour] = {}
+            markov_fallback_hourly[fkey][hour][arr] = (
+                markov_fallback_hourly[fkey][hour].get(arr, 0.0) + weight
+            )
+            continue
 
         pkey = (op, wake, prev, dep)
         if pkey not in markov_hourly:
             markov_hourly[pkey] = {}
         if hour not in markov_hourly[pkey]:
             markov_hourly[pkey][hour] = {}
-        markov_hourly[pkey][hour][arr] = markov_hourly[pkey][hour].get(arr, 0) + cnt
+        markov_hourly[pkey][hour][arr] = markov_hourly[pkey][hour].get(arr, 0.0) + weight
 
-    # --- Fallback table: origin-only (no previous-origin conditioning) ---
-    fallback_grp = (
-        df.groupby([AIRLINE_COL, AC_WAKE_COL, DEP_COL, ARR_COL, "DEP_HOUR_REFTZ"], sort=False)
-        .size()
-        .reset_index(name="COUNT")
-    )
+    return markov_hourly, markov_fallback_hourly
 
-    for row in fallback_grp.itertuples(index=False):
-        op = str(row.AC_OPER)
-        wake = str(row.AC_WAKE)
-        dep = str(row.DEP_ICAO)
-        arr = str(row.ARR_ICAO)
-        hour = int(row.DEP_HOUR_REFTZ)
-        cnt = int(row.COUNT)
 
-        fkey = (op, wake, dep)
-        if fkey not in markov_fallback_hourly:
-            markov_fallback_hourly[fkey] = {}
-        if hour not in markov_fallback_hourly[fkey]:
-            markov_fallback_hourly[fkey][hour] = {}
-        markov_fallback_hourly[fkey][hour][arr] = markov_fallback_hourly[fkey][hour].get(arr, 0) + cnt
+def _build_markov_tables(base_df, markov_manipulation_fn=None):
+    """Build primary/fallback Markov tables and apply optional user manipulation.
 
+    Returns:
+        final_markov: DataFrame with combined primary and fallback rows for CSV export.
+        markov_hourly: nested dict  (op, wake, prev, dep) -> hour -> {arr: weight}
+        markov_fallback_hourly: nested dict  (op, wake, dep) -> hour -> {arr: weight}
+    """
+    markov_manipulation_fn = markov_manipulation_fn or (lambda params, context: None)
+    df = _prepare_markov_source(base_df)
+
+    primary_df = _build_primary_markov_counts(df)
+    fallback_df = _build_fallback_markov_counts(df)
+    combined_df = pd.concat([primary_df, fallback_df], ignore_index=True)
+    final_markov = _apply_markov_manipulation(combined_df, markov_manipulation_fn)
+    markov_hourly, markov_fallback_hourly = _pack_markov_tables(final_markov)
     return final_markov, markov_hourly, markov_fallback_hourly
 
 
@@ -262,7 +399,10 @@ def generate_markov(config: PipelineConfig, airline_filter: str | None = None) -
     print(f"[Markov]   {base_df[AC_REG_COL].nunique()} unique aircraft in normalized schedule")
 
     # Step 1: Markov transitions
-    final_markov, markov_hourly, markov_fallback_hourly = _build_markov_tables(base_df)
+    final_markov, markov_hourly, markov_fallback_hourly = _build_markov_tables(
+        base_df,
+        config.markov_manipulation_fn,
+    )
 
     # Step 2: Initial conditions (needs Markov tables for destination sampling)
     model = InitialConditionModel(

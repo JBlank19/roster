@@ -37,14 +37,14 @@ type AirlineWakeOriginKey = tuple[str, str, str]
 type AirlineWakeRouteKey = tuple[str, str, str, str]
 type AirlineWakeDestinationKey = tuple[str, str, str]
 
-type HourlyDestinationCounts = dict[int, dict[str, int]]
+type HourlyDestinationWeights = dict[int, dict[str, float]]
 type HourlyProbabilities = dict[int, float]
 
 # Markov keys:
 # - primary: (airline, wake, previous_origin, origin)
 # - fallback: (airline, wake, origin)
-type PrimaryMarkovTable = dict[tuple[str, str, str, str], HourlyDestinationCounts]
-type FallbackMarkovTable = dict[tuple[str, str, str], HourlyDestinationCounts]
+type PrimaryMarkovTable = dict[tuple[str, str, str, str], HourlyDestinationWeights]
+type FallbackMarkovTable = dict[tuple[str, str, str], HourlyDestinationWeights]
 
 
 def _empty_phys_ta_df() -> pd.DataFrame:
@@ -83,7 +83,7 @@ class InitialConditionState:
     first_std_samples: dict[AirlineWakeOriginKey, list[int]] = field(default_factory=dict)
     p_prior: dict[AirlineWakeKey, float] = field(default_factory=dict)
     p_prior_only: dict[AirlineWakeKey, float] = field(default_factory=dict)
-    backward_prev_counts: dict[AirlineWakeDestinationKey, dict[str, int]] = field(default_factory=dict)
+    backward_prev_counts: dict[AirlineWakeDestinationKey, dict[str, float]] = field(default_factory=dict)
     prior_sta_samples: dict[AirlineWakeRouteKey, list[int]] = field(default_factory=dict)
     flight_time_median: dict[AirlineWakeRouteKey, int] = field(default_factory=dict)
     p_next_hourly: dict[AirlineWakeKey, HourlyProbabilities] = field(default_factory=dict)

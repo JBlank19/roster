@@ -2,7 +2,7 @@
 
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Callable
+from typing import Callable, Literal, Mapping
 
 from .time_window import (
     DEFAULT_ACTUAL_TIMES,
@@ -19,9 +19,38 @@ from .time_window import (
 ManipulationFn = Callable[[dict[str, float], str], dict[str, float]]
 
 
+@dataclass(frozen=True)
+class MarkovContext:
+    """Metadata exposed to user Markov manipulation callbacks."""
+
+    table_kind: Literal["primary", "fallback"]
+    airline: str
+    wake: str
+    prev_origin: str | None
+    origin: str
+    dep_hour_reftz: int
+    base_probs: Mapping[str, float]
+    base_counts: Mapping[str, int]
+
+
+MarkovManipulationFn = Callable[
+    [dict[str, float], MarkovContext],
+    dict[str, float] | None,
+]
+
+
 def _default_manipulation(params: dict[str, float], dtype: str) -> dict[str, float]:
     """Identity manipulation: returns parameters unchanged."""
     return params
+
+
+def _default_markov_manipulation(
+    params: dict[str, float],
+    context: MarkovContext,
+) -> dict[str, float] | None:
+    """Identity Markov manipulation: leaves transition weights unchanged."""
+    del params, context
+    return None
 
 
 @dataclass
@@ -60,6 +89,10 @@ class PipelineConfig:
     window_length_hours: int = DEFAULT_WINDOW_LENGTH_HOURS
     actual_times: bool = DEFAULT_ACTUAL_TIMES
     manipulation_fn: ManipulationFn = field(default=_default_manipulation, repr=False)
+    markov_manipulation_fn: MarkovManipulationFn = field(
+        default=_default_markov_manipulation,
+        repr=False,
+    )
     window_start_mins: int = field(init=False)
     window_length_mins: int = field(init=False)
 

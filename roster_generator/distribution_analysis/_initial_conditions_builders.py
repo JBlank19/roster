@@ -351,17 +351,17 @@ def _build_phys_ta_min(state: InitialConditionState) -> None:
 
 
 def _build_backward_prev_from_markov(state: InitialConditionState) -> None:
-    """Invert Markov transitions to count candidate previous origins by destination."""
+    """Invert Markov transitions to weight candidate previous origins by destination."""
     backward_counts = {}
     for (op, wake, prev, dep), hourly in state.markov_hourly.items():
         key = (str(op), str(wake), str(dep))
         if key not in backward_counts:
             backward_counts[key] = {}
-        total = 0
+        total = 0.0
         for hour_counts in hourly.values():
-            total += int(sum(hour_counts.values()))
+            total += float(sum(hour_counts.values()))
         if total > 0:
-            backward_counts[key][str(prev)] = backward_counts[key].get(str(prev), 0) + total
+            backward_counts[key][str(prev)] = backward_counts[key].get(str(prev), 0.0) + total
     state.backward_prev_counts = backward_counts
 
 

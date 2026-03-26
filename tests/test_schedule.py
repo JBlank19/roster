@@ -93,6 +93,14 @@ def _make_markov(*rows) -> pd.DataFrame:
     ])
 
 
+def _make_markov_combined(*rows) -> pd.DataFrame:
+    """Build a combined Markov DataFrame with explicit primary/fallback rows."""
+    return pd.DataFrame(rows, columns=[
+        "TABLE_KIND", "AC_OPER", "AC_WAKE", "PREV_ICAO", "DEP_ICAO",
+        "ARR_ICAO", "DEP_HOUR_REFTZ", "COUNT", "WEIGHT", "PROB",
+    ])
+
+
 def _make_turnaround_intraday_params(*rows) -> pd.DataFrame:
     """Build turnaround intraday params from (airline, wake, location, shape) tuples."""
     return pd.DataFrame(rows, columns=["airline", "wake", "location", "shape"])
@@ -128,6 +136,21 @@ MARKOV = _make_markov(
     ("IBE", "M", "LEMD", "EGLL", "LEMD", 14, 10),
     ("IBE", "M", "EGLL", "LEMD", "EGLL", 16, 10),
     ("IBE", "M", "LEMD", "EGLL", "LEMD", 18, 10),
+)
+
+MARKOV_COMBINED = _make_markov_combined(
+    ("primary", "IBE", "M", "EGLL", "LEMD", "EGLL", 8, 10, 10.0, 1.0),
+    ("primary", "IBE", "M", "LEMD", "EGLL", "LEMD", 10, 10, 10.0, 1.0),
+    ("primary", "IBE", "M", "EGLL", "LEMD", "EGLL", 12, 10, 10.0, 1.0),
+    ("primary", "IBE", "M", "LEMD", "EGLL", "LEMD", 14, 10, 10.0, 1.0),
+    ("primary", "IBE", "M", "EGLL", "LEMD", "EGLL", 16, 10, 10.0, 1.0),
+    ("primary", "IBE", "M", "LEMD", "EGLL", "LEMD", 18, 10, 10.0, 1.0),
+    ("fallback", "IBE", "M", "", "LEMD", "EGLL", 8, 10, 10.0, 1.0),
+    ("fallback", "IBE", "M", "", "EGLL", "LEMD", 10, 10, 10.0, 1.0),
+    ("fallback", "IBE", "M", "", "LEMD", "EGLL", 12, 10, 10.0, 1.0),
+    ("fallback", "IBE", "M", "", "EGLL", "LEMD", 14, 10, 10.0, 1.0),
+    ("fallback", "IBE", "M", "", "LEMD", "EGLL", 16, 10, 10.0, 1.0),
+    ("fallback", "IBE", "M", "", "EGLL", "LEMD", 18, 10, 10.0, 1.0),
 )
 
 # Lognormal params: location = ln(45) ≈ 3.81, shape = 0.2 → ~45 min turnaround
@@ -194,15 +217,17 @@ IC_SINGLE_FLIGHT = _make_initial_conditions(
 )
 
 
-def _write_all_inputs(tmp_path, ic_df, suffix="", config_kwargs=None):
+def _write_all_inputs(tmp_path, ic_df, suffix="", config_kwargs=None, markov_df=None):
     """Write all 6 input files and return a PipelineConfig."""
     analysis = tmp_path / "analysis"
     output = tmp_path / "output"
+    if markov_df is None:
+        markov_df = MARKOV
 
     _write_csv(analysis / f"initial_conditions{suffix}.csv", ic_df)
     _write_csv(output / f"routes{suffix}.csv", ROUTES)
     _write_csv(output / f"airports{suffix}.csv", AIRPORTS)
-    _write_csv(analysis / f"markov{suffix}.csv", MARKOV)
+    _write_csv(analysis / f"markov{suffix}.csv", markov_df)
     _write_csv(
         analysis / f"scheduled_turnaround_intraday_params{suffix}.csv",
         TURNAROUND_INTRADAY,
@@ -232,11 +257,11 @@ def _run_schedule(tmp_path, ic_df=None, suffix="", seed=42, config_kwargs=None) 
     return pd.read_csv(cfg.output_path("schedule"))
 
 
-def _build_data_manager(tmp_path, ic_df=None, seed=42) -> DataManager:
+def _build_data_manager(tmp_path, ic_df=None, seed=42, markov_df=None) -> DataManager:
     """Write standard inputs and return a DataManager for direct lookup tests."""
     if ic_df is None:
         ic_df = IC_STANDARD
-    cfg = _write_all_inputs(tmp_path, ic_df)
+    cfg = _write_all_inputs(tmp_path, ic_df, markov_df=markov_df)
     rng = random.Random(seed)
     return DataManager(
         rng,
@@ -533,6 +558,36 @@ class TestScheduleRefactorGuards:
         generate_schedule(cfg)
         out_df = pd.read_csv(cfg.output_path("schedule"))
         assert len(out_df) > 0
+
+    def test_data_manager_loads_combined_markov_tables(self, tmp_path):
+        """Combined Markov CSVs should populate primary and fallback tables separately."""
+        data = _build_data_manager(tmp_path, seed=123, markov_df=MARKOV_COMBINED)
+        assert ("IBE", "M", "EGLL", "LEMD") in data.markov_hourly
+        assert ("IBE", "M", "LEMD") in data.markov_fallback_hourly
+
+    def test_destination_lookup_honors_explicit_markov_weights(self, tmp_path):
+        """Destination probabilities should be computed from explicit WEIGHT values."""
+        weighted_markov = _make_markov_combined(
+            ("fallback", "IBE", "M", "", "LEMD", "EGLL", 8, 10, 30.0, 0.75),
+            ("fallback", "IBE", "M", "", "LEMD", "LFPG", 8, 10, 10.0, 0.25),
+        )
+        data = _build_data_manager(tmp_path, seed=123, markov_df=weighted_markov)
+        destinations, source = data.get_destinations(
+            "IBE", "M", "XXXX", "LEMD", dep_utc_mins=8 * 60, arr_utc_mins=0
+        )
+
+        assert source == "fallback_expanded"
+        assert destinations == [("EGLL", 0.75), ("LFPG", 0.25)]
+
+    def test_legacy_markov_without_table_kind_still_loads(self, tmp_path):
+        """Legacy Markov CSVs without TABLE_KIND/WEIGHT should keep working."""
+        data = _build_data_manager(tmp_path, seed=123)
+        destinations, source = data.get_destinations(
+            "IBE", "M", "XXXX", "LEMD", dep_utc_mins=8 * 60, arr_utc_mins=0
+        )
+
+        assert source == "fallback_expanded"
+        assert destinations and destinations[0][0] == "EGLL"
 
     def test_generate_chain_counts_missing_turnaround_as_no_destination(self, tmp_path, monkeypatch):
         """A missing turnaround sample increments no-destination single-flight counters."""

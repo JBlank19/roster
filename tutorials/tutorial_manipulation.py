@@ -1,17 +1,33 @@
 """
-Tutorial: Distribution Manipulation
-====================================
+Tutorial: Distribution And Markov Manipulation
+==============================================
 
-Shows how to use ``manipulation_fn`` to modify any distribution parameter
-at runtime without touching the underlying data files.
+Shows how to use:
 
-The callback signature is::
+- ``manipulation_fn`` to modify scalar distribution parameters at runtime
+- ``markov_manipulation_fn`` to reweight Markov destinations without
+  breaking row-stochastic validity
+
+The scalar callback signature is::
 
     def manipulation_fn(params: dict[str, float], dtype: str) -> dict[str, float]
 
 - ``params`` is a dict of the distribution's parameters.
 - ``dtype`` is a string descriptor: ``"<distribution_type> <key1> <key2> ..."``.
 - Return the (possibly modified) ``params`` dict.
+
+The Markov callback signature is::
+
+    def markov_manipulation_fn(
+        base_probs: dict[str, float],
+        ctx: roster_generator.MarkovContext,
+    ) -> dict[str, float] | None
+
+- ``base_probs`` is the destination probability row before manipulation.
+- ``ctx`` contains metadata such as airline, origin, previous origin,
+  hour, and whether the row is from the primary or fallback table.
+- Return multiplicative biases by destination. Missing destinations
+  default to ``1.0`` and the row is renormalized automatically.
 
 Available distributions and their params/dtype formats:
 
@@ -24,8 +40,8 @@ Available distributions and their params/dtype formats:
     P(prior day)                 "p_prior IBE H"                     probability
 
 By default ``manipulation_fn`` is an identity function (no changes).
-To apply modifications, define your own function and pass it to
-``PipelineConfig``.
+By default both callbacks are identities (no changes). To apply
+modifications, define your own functions and pass them to ``PipelineConfig``.
 
 Usage:
     python tutorial_manipulation.py --seed 42 --suffix manip
@@ -98,8 +114,45 @@ def my_manipulation(params: dict[str, float], dtype: str) -> dict[str, float]:
     return params
 
 
+def my_markov_manipulation(
+    base_probs: dict[str, float],
+    ctx: roster_generator.MarkovContext,
+) -> dict[str, float]:
+    """Example Markov manipulation using multiplicative destination biases.
+
+    This callback never adds new routes. It only reweights destinations that
+    already exist in the historical row and the code renormalizes the row
+    afterward.
+
+    Worked example:
+      base row  = {"LEMD": 0.40, "LEVC": 0.35, "LEPA": 0.25}
+      bias map  = {"LEMD": 1.5, "LEVC": 0.7}
+      weighted  = {"LEMD": 0.60, "LEVC": 0.245, "LEPA": 0.25}
+      final row = {"LEMD": 0.548, "LEVC": 0.224, "LEPA": 0.228}
+    """
+
+    bias: dict[str, float] = {}
+
+    # --- Example 1: Boost the odds of a specific route in the morning ---
+    # For IBE departures from LEBL between 06:00 and 11:59 REFTZ,
+    # increase the odds of going to LEMD by 50%.
+    if (
+        ctx.airline == "IBE"
+        and ctx.origin == "LEBL"
+        and 6 <= ctx.dep_hour_reftz <= 11
+        and "LEMD" in base_probs
+    ):
+        bias["LEMD"] = 1.5
+
+    # --- Example 2: Mildly discourage another destination on the same row ---
+    if ctx.origin == "LEBL" and "LEVC" in base_probs:
+        bias["LEVC"] = 0.7
+
+    return bias
+
+
 # ------------------------------------------------------------------
-# Pipeline (same as tutorial_pipeline.py, but with manipulation_fn)
+# Pipeline (same as tutorial_pipeline.py, but with both manipulation hooks)
 # ------------------------------------------------------------------
 
 def main() -> int:
@@ -141,7 +194,7 @@ def main() -> int:
         )
 
     # ------------------------------------------------------------------
-    # Setup - pass manipulation_fn to PipelineConfig
+    # Setup - pass both manipulation callbacks to PipelineConfig
     # ------------------------------------------------------------------
     config = roster_generator.PipelineConfig(
         schedule_file=input_file,
@@ -153,10 +206,11 @@ def main() -> int:
         window_start=window_cfg.window_start,
         window_length_hours=window_cfg.window_length_hours,
         actual_times=window_cfg.actual_times,
-        manipulation_fn=my_manipulation,  # <-- the only difference
+        manipulation_fn=my_manipulation,
+        markov_manipulation_fn=my_markov_manipulation,
     )
 
-    print("[Main] Using custom manipulation_fn")
+    print("[Main] Using custom manipulation_fn and markov_manipulation_fn")
 
     # ------------------------------------------------------------------
     # Stages 1-4: Run the full pipeline

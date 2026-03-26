@@ -271,20 +271,38 @@ class TestBuildMarkovTablesSoftware:
         assert isinstance(markov_fallback_hourly, dict)
 
     def test_primary_table_has_expected_columns(self, base_df):
-        """Primary DataFrame should contain the canonical Markov columns."""
+        """Export DataFrame should contain the canonical Markov columns."""
         final_markov, _, _ = _build_markov_tables(base_df)
-        expected = {AIRLINE_COL, AC_WAKE_COL, "PREV_ICAO", DEP_COL, ARR_COL,
-                    "DEP_HOUR_REFTZ", "PROB", "COUNT"}
+        expected = {
+            "TABLE_KIND",
+            AIRLINE_COL,
+            AC_WAKE_COL,
+            "PREV_ICAO",
+            DEP_COL,
+            ARR_COL,
+            "DEP_HOUR_REFTZ",
+            "COUNT",
+            "WEIGHT",
+            "PROB",
+        }
         assert expected.issubset(set(final_markov.columns))
 
     def test_first_flights_excluded_from_primary(self, base_df):
         """The first flight per aircraft has no predecessor — should not appear in primary."""
         final_markov, _, _ = _build_markov_tables(base_df)
+        primary = final_markov[final_markov["TABLE_KIND"] == "primary"]
         # AC001 first flight is LEMD->EGLL, AC002 first is EGLL->LFPG.
         # These should not appear with PREV_ICAO in the primary table
         # (unless another aircraft provides the same transition with a predecessor).
         # Specifically, no row should have PREV_ICAO as NaN.
-        assert final_markov["PREV_ICAO"].notna().all()
+        assert primary["PREV_ICAO"].notna().all()
+
+    def test_fallback_rows_persisted_with_empty_prev_icao(self, base_df):
+        """Fallback rows should be exported explicitly with blank PREV_ICAO."""
+        final_markov, _, _ = _build_markov_tables(base_df)
+        fallback = final_markov[final_markov["TABLE_KIND"] == "fallback"]
+        assert not fallback.empty
+        assert (fallback["PREV_ICAO"].astype(str) == "").all()
 
     def test_fallback_includes_first_flights(self, base_df):
         """Fallback table should include first-of-chain flights (no prev_origin conditioning)."""
@@ -303,9 +321,9 @@ class TestBuildMarkovTablesSoftware:
 class TestBuildMarkovTablesPhysical:
 
     def test_probabilities_sum_to_one(self, base_df):
-        """For each (airline, wake, prev, dep, hour), probabilities must sum to 1."""
+        """For each conditional row, probabilities must sum to 1."""
         final_markov, _, _ = _build_markov_tables(base_df)
-        group_cols = [AIRLINE_COL, AC_WAKE_COL, "PREV_ICAO", DEP_COL, "DEP_HOUR_REFTZ"]
+        group_cols = ["TABLE_KIND", AIRLINE_COL, AC_WAKE_COL, "PREV_ICAO", DEP_COL, "DEP_HOUR_REFTZ"]
         prob_sums = final_markov.groupby(group_cols)["PROB"].sum()
         np.testing.assert_allclose(prob_sums.values, 1.0, atol=1e-9)
 
@@ -313,6 +331,11 @@ class TestBuildMarkovTablesPhysical:
         """All transition counts must be strictly positive."""
         final_markov, _, _ = _build_markov_tables(base_df)
         assert (final_markov["COUNT"] > 0).all()
+
+    def test_weights_are_positive(self, base_df):
+        """All manipulated weights must be strictly positive."""
+        final_markov, _, _ = _build_markov_tables(base_df)
+        assert (final_markov["WEIGHT"] > 0).all()
 
     def test_hour_stratification(self):
         """Flights at different hours should produce separate hourly entries."""
@@ -364,7 +387,8 @@ class TestBuildMarkovTablesPhysical:
     def test_primary_count_conservation(self, base_df):
         """Total primary counts ≤ total flights minus one per aircraft."""
         final_markov, _, _ = _build_markov_tables(base_df)
-        total_primary_counts = final_markov["COUNT"].sum()
+        primary = final_markov[final_markov["TABLE_KIND"] == "primary"]
+        total_primary_counts = primary["COUNT"].sum()
         n_aircraft = base_df[AC_REG_COL].nunique()
         n_flights = len(base_df)
         # Each aircraft's first flight has no predecessor
@@ -374,6 +398,105 @@ class TestBuildMarkovTablesPhysical:
         """No transition row should have DEP == ARR."""
         final_markov, _, _ = _build_markov_tables(base_df)
         assert (final_markov[DEP_COL] != final_markov[ARR_COL]).all()
+
+    def test_identity_callback_leaves_weights_equal_to_counts(self, base_df):
+        """Without manipulation, exported weights should match raw counts."""
+        final_markov, _, _ = _build_markov_tables(base_df)
+        np.testing.assert_allclose(
+            final_markov["WEIGHT"].to_numpy(dtype=float),
+            final_markov["COUNT"].to_numpy(dtype=float),
+        )
+
+    def test_bias_callback_renormalizes_row(self):
+        """A positive multiplicative bias should change row probabilities and keep them normalized."""
+        flights = [
+            _make_flight("AC001", "IBE", "M", "LEMD", "EGLL",
+                         "2023-09-01 06:00", "2023-09-01 08:00"),
+            _make_flight("AC001", "IBE", "M", "EGLL", "LFPG",
+                         "2023-09-01 10:00", "2023-09-01 11:30"),
+            _make_flight("AC002", "IBE", "M", "LIRF", "EGLL",
+                         "2023-09-01 07:00", "2023-09-01 09:00"),
+            _make_flight("AC002", "IBE", "M", "EGLL", "LEMD",
+                         "2023-09-01 10:00", "2023-09-01 12:00"),
+        ]
+        df = _prepare_base_flights(_make_base_df(flights))
+
+        def bias_lemd(base_probs, ctx):
+            del ctx
+            out = {}
+            if "LEMD" in base_probs:
+                out["LEMD"] = 2.0
+            return out
+
+        final_markov, _, _ = _build_markov_tables(df, bias_lemd)
+        fallback = final_markov[
+            (final_markov["TABLE_KIND"] == "fallback")
+            & (final_markov[AIRLINE_COL] == "IBE")
+            & (final_markov[AC_WAKE_COL] == "M")
+            & (final_markov[DEP_COL] == "EGLL")
+            & (final_markov["DEP_HOUR_REFTZ"] == 10)
+        ].sort_values(ARR_COL).reset_index(drop=True)
+
+        assert set(fallback[ARR_COL]) == {"LEMD", "LFPG"}
+        np.testing.assert_allclose(fallback["PROB"].sum(), 1.0, atol=1e-9)
+        prob_map = dict(zip(fallback[ARR_COL], fallback["PROB"]))
+        np.testing.assert_allclose(prob_map["LEMD"], 2.0 / 3.0, atol=1e-9)
+        np.testing.assert_allclose(prob_map["LFPG"], 1.0 / 3.0, atol=1e-9)
+
+    def test_unknown_markov_destination_bias_raises(self, base_df):
+        """Manipulation cannot introduce unseen destinations into a row."""
+        def invalid_bias(base_probs, ctx):
+            del base_probs, ctx
+            return {"ZZZZ": 1.5}
+
+        with pytest.raises(ValueError, match="Unknown Markov destinations"):
+            _build_markov_tables(base_df, invalid_bias)
+
+    def test_non_positive_markov_bias_raises(self, base_df):
+        """Manipulation biases must be strictly positive."""
+        def invalid_bias(base_probs, ctx):
+            del ctx
+            first_dest = next(iter(base_probs))
+            return {first_dest: 0.0}
+
+        with pytest.raises(ValueError, match="strictly positive"):
+            _build_markov_tables(base_df, invalid_bias)
+
+    def test_non_finite_markov_bias_raises(self, base_df):
+        """Manipulation biases must be finite."""
+        def invalid_bias(base_probs, ctx):
+            del ctx
+            first_dest = next(iter(base_probs))
+            return {first_dest: float("nan")}
+
+        with pytest.raises(ValueError, match="strictly positive"):
+            _build_markov_tables(base_df, invalid_bias)
+
+    def test_fallback_rows_are_manipulated_and_persisted(self):
+        """Fallback rows should also receive manipulation and retain CSV export columns."""
+        flights = [
+            _make_flight("AC001", "IBE", "M", "LEMD", "EGLL",
+                         "2023-09-01 06:00", "2023-09-01 08:00"),
+            _make_flight("AC001", "IBE", "M", "EGLL", "LFPG",
+                         "2023-09-01 10:00", "2023-09-01 11:30"),
+            _make_flight("AC002", "IBE", "M", "LIRF", "EGLL",
+                         "2023-09-01 07:00", "2023-09-01 09:00"),
+            _make_flight("AC002", "IBE", "M", "EGLL", "LEMD",
+                         "2023-09-01 10:00", "2023-09-01 12:00"),
+        ]
+        df = _prepare_base_flights(_make_base_df(flights))
+
+        def bias_lfpg(base_probs, ctx):
+            if ctx.table_kind == "fallback" and "LFPG" in base_probs:
+                return {"LFPG": 3.0}
+            return {}
+
+        final_markov, _, fallback = _build_markov_tables(df, bias_lfpg)
+        exported_fallback = final_markov[final_markov["TABLE_KIND"] == "fallback"]
+        assert not exported_fallback.empty
+        key = ("IBE", "M", "EGLL")
+        assert key in fallback
+        assert fallback[key][10]["LFPG"] == pytest.approx(3.0)
 
 
 # ---------------------------------------------------------------------------
@@ -452,3 +575,44 @@ class TestGenerateMarkov:
         assert (tmp_path / "analysis" / "markov_test.csv").exists()
         assert (tmp_path / "analysis" / "initial_conditions_test.csv").exists()
         assert (tmp_path / "output" / "phys_ta_test.csv").exists()
+
+    def test_generate_markov_persists_combined_markov_schema(self, tmp_path):
+        """Generated Markov CSV should contain combined primary/fallback rows and weights."""
+        schedule_path = self._write_schedule_csv(tmp_path, self._make_two_day_schedule())
+        cfg = PipelineConfig(
+            schedule_file=schedule_path,
+            analysis_dir=tmp_path / "analysis",
+            output_dir=tmp_path / "output",
+        )
+        generate_markov(cfg)
+        markov_df = pd.read_csv(cfg.analysis_path("markov"))
+
+        assert {"TABLE_KIND", "COUNT", "WEIGHT", "PROB"}.issubset(markov_df.columns)
+        assert set(markov_df["TABLE_KIND"]) == {"primary", "fallback"}
+        assert (markov_df["WEIGHT"] > 0).all()
+
+    def test_generate_markov_applies_markov_manipulation(self, tmp_path):
+        """Configured Markov manipulation should change exported row weights."""
+        schedule_path = self._write_schedule_csv(tmp_path, self._make_two_day_schedule())
+
+        def bias_lfpg(base_probs, ctx):
+            if ctx.origin == "EGLL" and "LFPG" in base_probs:
+                return {"LFPG": 2.0}
+            return {}
+
+        cfg = PipelineConfig(
+            schedule_file=schedule_path,
+            analysis_dir=tmp_path / "analysis",
+            output_dir=tmp_path / "output",
+            markov_manipulation_fn=bias_lfpg,
+        )
+        generate_markov(cfg)
+        markov_df = pd.read_csv(cfg.analysis_path("markov"))
+        target = markov_df[
+            (markov_df["TABLE_KIND"] == "fallback")
+            & (markov_df[DEP_COL] == "EGLL")
+            & (markov_df[ARR_COL] == "LFPG")
+        ]
+
+        assert not target.empty
+        assert (target["WEIGHT"] >= target["COUNT"]).all()

@@ -13,7 +13,7 @@ from pathlib import Path
 
 import pytest
 
-from roster_generator.config import PipelineConfig
+from roster_generator.config import MarkovContext, PipelineConfig
 
 
 # ---------------------------------------------------------------------------
@@ -84,6 +84,7 @@ class TestPipelineConfigInit:
         assert cfg.actual_times is False
         assert cfg.window_start_mins == 0
         assert cfg.window_length_mins == 1440
+        assert callable(cfg.markov_manipulation_fn)
 
     def test_custom_time_window_values(self, tmp_path):
         """Custom REFTZ/window values should be stored and derived correctly."""
@@ -191,6 +192,28 @@ class TestPostInit:
         assert isinstance(cfg.analysis_dir, Path)
         assert isinstance(cfg.output_dir, Path)
 
+
+# ---------------------------------------------------------------------------
+# Markov manipulation types
+# ---------------------------------------------------------------------------
+
+class TestMarkovManipulationConfig:
+
+    def test_markov_context_stores_metadata(self):
+        """MarkovContext should expose row metadata for user callbacks."""
+        ctx = MarkovContext(
+            table_kind="primary",
+            airline="IBE",
+            wake="M",
+            prev_origin="LEMD",
+            origin="EGLL",
+            dep_hour_reftz=10,
+            base_probs={"LFPG": 1.0},
+            base_counts={"LFPG": 4},
+        )
+        assert ctx.table_kind == "primary"
+        assert ctx.prev_origin == "LEMD"
+        assert ctx.base_probs["LFPG"] == 1.0
 
 # ---------------------------------------------------------------------------
 # analysis_path helper

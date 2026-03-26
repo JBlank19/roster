@@ -473,6 +473,23 @@ class TestGenerateRoutes:
         path = tmp_path / "analysis" / "markov.csv"
         return self._write_csv(path, markov_df)
 
+    def _write_combined_markov_csv(self, tmp_path):
+        """Write a combined Markov CSV with explicit primary and fallback rows."""
+        markov_df = pd.DataFrame({
+            "TABLE_KIND": ["primary", "primary", "fallback", "fallback"],
+            DEP_COL: ["LEMD", "EGLL", "LEMD", "EGLL"],
+            ARR_COL: ["EGLL", "LFPG", "EGLL", "LFPG"],
+            AC_WAKE_COL: ["M", "M", "M", "M"],
+            AIRLINE_COL: ["IBE", "IBE", "IBE", "IBE"],
+            "PREV_ICAO": ["LFPG", "LEMD", "", ""],
+            "DEP_HOUR_REFTZ": [8, 12, 8, 12],
+            "COUNT": [4, 4, 4, 4],
+            "WEIGHT": [4.0, 4.0, 4.0, 4.0],
+            "PROB": [1.0, 1.0, 1.0, 1.0],
+        })
+        path = tmp_path / "analysis" / "markov.csv"
+        return self._write_csv(path, markov_df)
+
     def test_raises_schedule_not_found(self, tmp_path):
         """FileNotFoundError when schedule file doesn't exist."""
         self._write_markov_csv(tmp_path)
@@ -590,6 +607,20 @@ class TestGenerateRoutes:
         airlines = df["airline_id"].unique()
         assert "ALL" in airlines
         assert len(airlines) >= 2
+
+    def test_generate_routes_accepts_combined_markov_csv(self, tmp_path):
+        """Routes generation should work with the combined Markov export format."""
+        schedule_path = self._write_schedule_csv(tmp_path, SCHEDULE_FLIGHTS)
+        self._write_combined_markov_csv(tmp_path)
+        cfg = PipelineConfig(
+            schedule_file=schedule_path,
+            analysis_dir=tmp_path / "analysis",
+            output_dir=tmp_path / "output",
+            actual_times=True,
+        )
+        generate_routes(cfg)
+        df = pd.read_csv(tmp_path / "output" / "routes.csv")
+        assert {("LEMD", "EGLL"), ("EGLL", "LFPG")} <= set(zip(df["orig_id"], df["dest_id"]))
 
     def test_output_times_are_positive_integers(self, tmp_path):
         """All times in the output CSV must be positive integers."""

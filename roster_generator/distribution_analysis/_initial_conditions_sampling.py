@@ -91,12 +91,12 @@ def _sample_fleet(state: InitialConditionState, rng: random.Random) -> list[Synt
 
 
 def _find_hourly_data_with_radius(
-    hourly_data: dict[int, dict[str, int]],
+    hourly_data: dict[int, dict[str, float]],
     center_hour: int,
     rng: random.Random,
     hour_bins: int,
     max_radius: int = 2,
-) -> tuple[dict[str, int], int]:
+) -> tuple[dict[str, float], int]:
     """Find hourly data at center hour or nearby hours (randomized direction)."""
     if not hourly_data:
         return {}, -1
@@ -137,7 +137,7 @@ def _get_markov_destinations(
 
     fallback_key = (op, wake, origin)
 
-    counts: dict[str, int] = {}
+    counts: dict[str, float] = {}
     if prev_origin:
         primary_key = (op, wake, prev_origin, origin)
         hourly_data = state.markov_hourly.get(primary_key, {})
@@ -160,7 +160,7 @@ def _get_markov_destinations(
     if not counts:
         return []
 
-    total = int(sum(counts.values()))
+    total = float(sum(counts.values()))
     if total <= 0:
         return []
 
@@ -207,7 +207,7 @@ def _try_sample_prior_for_origin(
         return False
 
     weighted_prev_candidates = [
-        (prev_origin, int(weight))
+        (prev_origin, float(weight))
         for prev_origin, weight in prev_counts.items()
     ]
     attempted_prev: set[str] = set()
@@ -265,7 +265,7 @@ def _sample_prior_for_aircraft(state: InitialConditionState, rng: random.Random,
         for origin in origins.keys()
         if origin != ac.origin and _origin_has_feasible_prior(state, ac.airline, ac.wake, origin)
     ]
-    weights = [int(origins[origin]) for origin in candidate_origins]
+    weights = [float(origins[origin]) for origin in candidate_origins]
 
     while candidate_origins:
         sampled_origin = rng.choices(candidate_origins, weights=weights, k=1)[0]

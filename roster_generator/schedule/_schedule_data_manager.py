@@ -98,30 +98,52 @@ class DataManager:
         prev_origins = markov_df["PREV_ICAO"].to_numpy(dtype=object)
         origins = markov_df["DEP_ICAO"].to_numpy(dtype=object)
         destinations = markov_df["ARR_ICAO"].to_numpy(dtype=object)
-        counts = markov_df["COUNT"].astype(int).to_numpy()
+        weights_col = "WEIGHT" if "WEIGHT" in markov_df.columns else "COUNT"
+        weights = pd.to_numeric(markov_df[weights_col], errors="coerce").fillna(0.0).astype(float).to_numpy()
         dep_hour_col = "DEP_HOUR_REFTZ" if "DEP_HOUR_REFTZ" in markov_df.columns else "DEP_HOUR_UTC"
         dep_hours = pd.to_numeric(markov_df[dep_hour_col], errors="coerce").fillna(12).astype(int).to_numpy()
+        has_table_kind = "TABLE_KIND" in markov_df.columns
+        table_kinds = (
+            markov_df["TABLE_KIND"].fillna("primary").astype(str).str.strip().str.lower().to_numpy()
+            if has_table_kind
+            else None
+        )
 
         for index in range(len(operators)):
-            primary_key = (
-                operators[index],
-                wakes[index],
-                prev_origins[index],
-                origins[index],
-            )
-            fallback_key = (operators[index], wakes[index], origins[index])
             dep_hour = int(dep_hours[index])
             destination = destinations[index]
-            count = int(counts[index])
+            weight = float(weights[index])
+            if weight <= 0:
+                continue
+
+            if has_table_kind:
+                table_kind = str(table_kinds[index])
+                if table_kind == "fallback":
+                    fallback_key = (operators[index], wakes[index], origins[index])
+                    fallback_hourly = self.markov_fallback_hourly.setdefault(fallback_key, {})
+                    fallback_hourly.setdefault(dep_hour, {})
+                    fallback_hourly[dep_hour][destination] = (
+                        fallback_hourly[dep_hour].get(destination, 0.0) + weight
+                    )
+                    continue
+
+            primary_key = (operators[index], wakes[index], prev_origins[index], origins[index])
+            dep_hour = int(dep_hours[index])
 
             primary_hourly = self.markov_hourly.setdefault(primary_key, {})
             primary_hourly.setdefault(dep_hour, {})
-            primary_hourly[dep_hour][destination] = count
+            primary_hourly[dep_hour][destination] = (
+                primary_hourly[dep_hour].get(destination, 0.0) + weight
+            )
 
+            if has_table_kind:
+                continue
+
+            fallback_key = (operators[index], wakes[index], origins[index])
             fallback_hourly = self.markov_fallback_hourly.setdefault(fallback_key, {})
             fallback_hourly.setdefault(dep_hour, {})
-            existing = fallback_hourly[dep_hour].get(destination, 0)
-            fallback_hourly[dep_hour][destination] = existing + count
+            existing = fallback_hourly[dep_hour].get(destination, 0.0)
+            fallback_hourly[dep_hour][destination] = existing + weight
 
     def _load_markov_data(self) -> None:
         """Load and prepare Markov transition lookup tables."""
@@ -417,8 +439,8 @@ class DataManager:
         key: tuple,
         center_hour: int,
         max_radius: int = 2,
-    ) -> Tuple[Dict[str, int], int]:
-        """Find transition counts at center hour or nearby hours."""
+    ) -> Tuple[Dict[str, float], int]:
+        """Find transition weights at center hour or nearby hours."""
         hourly_data = data_source.get(key, {})
         if not hourly_data:
             return {}, -1
@@ -483,7 +505,7 @@ class DataManager:
                 return [(prev_origin, 1.0)], "return_to_origin"
             return [], "none"
 
-        total_count = sum(dest_counts.values())
+        total_count = float(sum(dest_counts.values()))
         results: List[Tuple[str, float]] = []
         if total_count > 0:
             for destination, count in dest_counts.items():

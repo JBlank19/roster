@@ -183,3 +183,53 @@ def test_seeded_determinism_smoke(prepared_df, markov_tables):
     ic_b = model_b.sample_initial_conditions()
 
     pd.testing.assert_frame_equal(ic_a, ic_b)
+
+
+def test_float_markov_weights_are_accepted_end_to_end(prepared_df):
+    """Initial-condition sampling should accept manipulated Markov float weights."""
+    def fractional_bias(base_probs, ctx):
+        if ctx.table_kind == "primary" and "LEMD" in base_probs:
+            return {"LEMD": 1.25}
+        return {}
+
+    _, markov_hourly, markov_fallback_hourly = _build_markov_tables(
+        prepared_df,
+        fractional_bias,
+    )
+    model = _build_model(prepared_df, markov_hourly, markov_fallback_hourly, seed=55)
+
+    assert any(
+        not float(weight).is_integer()
+        for hourly in model._markov_hourly.values()
+        for weights in hourly.values()
+        for weight in weights.values()
+    )
+
+    np.random.seed(55)
+    ic_df = model.sample_initial_conditions()
+    assert len(ic_df) > 0
+
+
+def test_backward_prev_weights_preserve_fractional_markov_manipulation(prepared_df):
+    """Backward previous-origin weights should remain floats and not be truncated."""
+    def fractional_bias(base_probs, ctx):
+        if ctx.table_kind == "primary":
+            first_dest = next(iter(base_probs))
+            return {first_dest: 1.5}
+        return {}
+
+    markov_hourly, markov_fallback_hourly = _build_markov_tables(
+        prepared_df,
+        fractional_bias,
+    )[1:]
+    model = InitialConditionModel(prepared_df, seed=73)
+    model.build_all()
+    model.set_markov_tables(markov_hourly, markov_fallback_hourly)
+
+    flattened = [
+        float(weight)
+        for prev_weights in model.backward_prev_counts.values()
+        for weight in prev_weights.values()
+    ]
+    assert flattened
+    assert any(not weight.is_integer() for weight in flattened)
