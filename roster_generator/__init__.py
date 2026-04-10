@@ -7,4 +7,5 @@ from .distribution_analysis.markov import generate_markov
 from .auxiliary.routes import generate_routes
 from .distribution_analysis.scheduled_flight_time import analyze_flight_time_distribution
 from .schedule import generate_schedule
+from .schedule import GenerationStats, RejectionLog
 from .distribution_analysis.scheduled_turnaround import analyze_turnaround_distribution

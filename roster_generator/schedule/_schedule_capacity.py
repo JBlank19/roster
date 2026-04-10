@@ -1,5 +1,6 @@
 from collections import defaultdict
-from typing import Dict, Tuple
+from dataclasses import dataclass
+from typing import Dict, Optional, Tuple
 
 from ._schedule_structures import Flight
 
@@ -8,6 +9,37 @@ BIN_SIZE_MINS = 5
 END_OF_DAY_MINS = 1440
 ROLLING_WINDOW_SIZE_BINS = 12  # 60 minutes / 5-minute bins
 DEFAULT_CAPACITY = 999
+
+
+@dataclass
+class CapacityCheckResult:
+    """Result of a single capacity availability check.
+
+    Behaves as a ``bool`` (``True`` ↔ available) so existing call sites using
+    ``if not result:`` require no changes, while callers that need rejection
+    detail can inspect the additional fields.
+
+    Attributes
+    ----------
+    available:
+        ``True`` if the movement can be accommodated.
+    blocked_airport:
+        ICAO code of the airport whose capacity limit was exceeded,
+        or ``None`` when *available* is ``True``.
+    blocked_movement:
+        ``"departure"`` or ``"arrival"``; ``None`` when available.
+    blocked_constraint:
+        ``"burst"`` (per-5-min-bin limit) or ``"rolling"``
+        (60-min window limit); ``None`` when available.
+    """
+
+    available: bool
+    blocked_airport: Optional[str] = None
+    blocked_movement: Optional[str] = None
+    blocked_constraint: Optional[str] = None
+
+    def __bool__(self) -> bool:
+        return self.available
 
 
 class CapacityTracker:
@@ -38,36 +70,64 @@ class CapacityTracker:
         end_bin = min(self.num_bins - 1, time_bin + ROLLING_WINDOW_SIZE_BINS - 1)
         return start_bin, end_bin
 
-    def _check_airport_availability(self, airport_code: str, time_mins: int, is_departure: bool) -> bool:
-        """Check burst and rolling constraints for one airport/time movement."""
+    def _check_airport_availability(
+        self, airport_code: str, time_mins: int, is_departure: bool
+    ) -> CapacityCheckResult:
+        """Check burst and rolling constraints for one airport/time movement.
+
+        Returns a :class:`CapacityCheckResult` that is falsy when the movement
+        cannot be accommodated and carries the specific blocking details.
+        """
         time_bin = self._get_bin_index(time_mins)
         slots_tracker = self.dep_slots if is_departure else self.arr_slots
+        movement = "departure" if is_departure else "arrival"
 
         burst_limit = self.burst_cap.get(airport_code, DEFAULT_CAPACITY)
         if slots_tracker[airport_code][time_bin] >= burst_limit:
-            return False
+            return CapacityCheckResult(
+                available=False,
+                blocked_airport=airport_code,
+                blocked_movement=movement,
+                blocked_constraint="burst",
+            )
 
         rolling_limit = self.rolling_cap.get(airport_code, DEFAULT_CAPACITY)
         start_bin, end_bin = self._rolling_window_bounds(time_bin)
         for bin_idx in range(start_bin, end_bin + 1):
             if self.movements_rolling[airport_code][bin_idx] >= rolling_limit:
-                return False
+                return CapacityCheckResult(
+                    available=False,
+                    blocked_airport=airport_code,
+                    blocked_movement=movement,
+                    blocked_constraint="rolling",
+                )
 
-        return True
+        return CapacityCheckResult(available=True)
 
-    def check_availability(self, origin: str, destination: str, std_mins: int, sta_mins: int) -> bool:
-        """Check whether origin departure and destination arrival can be accommodated."""
+    def check_availability(
+        self, origin: str, destination: str, std_mins: int, sta_mins: int
+    ) -> CapacityCheckResult:
+        """Check whether origin departure and destination arrival can be accommodated.
+
+        Returns a :class:`CapacityCheckResult` that is truthy when both movements
+        fit within capacity limits, and falsy (with blocking details) otherwise.
+        Movements outside the scheduling window are always considered available.
+        """
         if not (
             0 <= std_mins < self.window_length_mins
             and 0 <= sta_mins < self.window_length_mins
         ):
-            return True
+            return CapacityCheckResult(available=True)
 
-        if not self._check_airport_availability(origin, std_mins, is_departure=True):
-            return False
-        if not self._check_airport_availability(destination, sta_mins, is_departure=False):
-            return False
-        return True
+        dep_result = self._check_airport_availability(origin, std_mins, is_departure=True)
+        if not dep_result:
+            return dep_result
+
+        arr_result = self._check_airport_availability(destination, sta_mins, is_departure=False)
+        if not arr_result:
+            return arr_result
+
+        return CapacityCheckResult(available=True)
 
     def _update_movement_counts(self, airport_code: str, time_mins: int, is_departure: bool) -> None:
         """Increment slot and rolling counters for one movement."""

@@ -2,6 +2,8 @@ from collections import defaultdict
 from dataclasses import dataclass, field
 from typing import Dict, List
 
+from ._rejection_log import RejectionLog
+
 
 @dataclass
 class GenerationStats:
@@ -32,6 +34,8 @@ class GenerationStats:
 
     examples_no_destinations: List[str] = field(default_factory=list)
     examples_capacity_exhausted: List[str] = field(default_factory=list)
+
+    rejection_log: RejectionLog = field(default_factory=RejectionLog)
 
     single_flight_total: int = 0
     single_flight_end_of_day: int = 0

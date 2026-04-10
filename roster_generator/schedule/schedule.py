@@ -223,7 +223,7 @@ def format_results(aircraft_list: List[Aircraft]) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
-def generate_schedule(config: PipelineConfig) -> None:
+def generate_schedule(config: PipelineConfig) -> GenerationStats:
     """Generate synthetic flight schedule via greedy forward construction."""
     seed = config.seed
     suffix = config.suffix
@@ -283,6 +283,7 @@ def generate_schedule(config: PipelineConfig) -> None:
         print("[Schedule] Turnaround lookup diagnostics: " + ", ".join(parts))
     print(f"[Schedule] Saved: {paths['output']} ({len(df)} flights)")
     print("[Schedule] --- SUCCESS ---")
+    return stats
 
 
 if __name__ == "__main__":

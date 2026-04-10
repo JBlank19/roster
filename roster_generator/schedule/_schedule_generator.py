@@ -148,6 +148,16 @@ class ScheduleGenerator:
             f"    No turnaround params -- key: {(aircraft.operator, prev_origin, current_airport, aircraft.wake)}\n"
             f"    Markov available hours: {available_hours}"
         )
+        self.stats.rejection_log.record_no_destination(
+            aircraft_reg=aircraft.reg,
+            operator=aircraft.operator,
+            wake=aircraft.wake,
+            airport=current_airport,
+            prev_origin=prev_origin,
+            arrival_mins=arrival_time,
+            reason="missing_turnaround",
+            available_hours=available_hours,
+        )
 
     def _record_end_of_day(
         self,
@@ -155,6 +165,7 @@ class ScheduleGenerator:
         turnaround_time: int,
         scheduled_departure_time: int,
         anchor_flight: Flight | None,
+        current_airport: str,
     ) -> None:
         """Track end-of-day termination and annotate anchor flight turnaround."""
         if anchor_flight is not None:
@@ -167,6 +178,15 @@ class ScheduleGenerator:
             self.stats.single_flight_total += 1
             term_hour = (scheduled_departure_time // 60) % max(1, self.window_length_mins // 60)
             self.stats.single_flight_termination_hours[term_hour] += 1
+
+        self.stats.rejection_log.record_end_of_day(
+            aircraft_reg=aircraft.reg,
+            operator=aircraft.operator,
+            wake=aircraft.wake,
+            airport=current_airport,
+            std_mins=scheduled_departure_time,
+            chain_length=len(aircraft.chain),
+        )
 
     def _record_no_destination(
         self,
@@ -189,6 +209,16 @@ class ScheduleGenerator:
             f"    At {current_airport} from {prev_origin}, arrival={arrival_time} mins\n"
             f"    Markov key: {markov_key}\n"
             f"    Available departure hours: {available_hours}"
+        )
+        self.stats.rejection_log.record_no_destination(
+            aircraft_reg=aircraft.reg,
+            operator=aircraft.operator,
+            wake=aircraft.wake,
+            airport=current_airport,
+            prev_origin=prev_origin,
+            arrival_mins=arrival_time,
+            reason="no_markov_data",
+            available_hours=available_hours,
         )
 
     def _record_capacity_exhausted(self, aircraft: Aircraft) -> None:
@@ -234,13 +264,25 @@ class ScheduleGenerator:
 
             scheduled_arrival_time = scheduled_departure_time + flight_time
             if scheduled_arrival_time < self.window_length_mins:
-                available = self.tracker.check_availability(
+                check = self.tracker.check_availability(
                     current_airport,
                     destination,
                     scheduled_departure_time,
                     scheduled_arrival_time,
                 )
-                if not available:
+                if not check:
+                    self.stats.rejection_log.record_capacity(
+                        aircraft_reg=aircraft.reg,
+                        operator=aircraft.operator,
+                        wake=aircraft.wake,
+                        origin=current_airport,
+                        destination=destination,
+                        blocked_airport=check.blocked_airport,
+                        blocked_movement=check.blocked_movement,
+                        blocked_constraint=check.blocked_constraint,
+                        std_mins=scheduled_departure_time,
+                        sta_mins=scheduled_arrival_time,
+                    )
                     termination_reason = "capacity"
                     continue
 
@@ -332,6 +374,7 @@ class ScheduleGenerator:
                     turnaround_time,
                     scheduled_departure_time,
                     anchor_flight,
+                    current_airport,
                 )
                 break
 
