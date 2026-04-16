@@ -1,1 +1,151 @@
-ROSTER: Realistic Operational Schedules Through Empirical Records
+# ROSTER - Realistic Operational Schedules Through Empirical Records
+
+[![Python 3.12+](https://img.shields.io/badge/python-3.12%2B-blue)](pyproject.toml)
+[![License: GPLv3](https://img.shields.io/badge/license-GPLv3-blue)](LICENSE)
+[![Package: roster-generator](https://img.shields.io/badge/package-roster--generator-lightgrey)](pyproject.toml)
+
+ROSTER is a Python package for generating realistic flight
+schedules from historical data. It is designed for ATM researchers that require synthetic schedules (with or without modification) for simulation purposes.
+
+The goal of ROSTER is to provide a transparent and reproducible pipeline for
+building these synthetic schedules, which preserve important operational structure:
+airline and wake-category mixes, airport and route usage, scheduled flight
+times and turnarounds, and fleet initial conditions.
+
+## Installation
+
+ROSTER requires Python 3.12 or newer. From a local checkout:
+
+```bash
+cd roster
+python -m venv .venv
+source .venv/bin/activate
+python -m pip install --upgrade pip
+python -m pip install -e .
+```
+
+The package dependencies are declared in `pyproject.toml` and include
+`pandas`, `numpy`, `airportsdata`, `aircraft-list`, `pytz`, and `pytest`.
+
+## Input Data
+
+The main ROSTER pipeline expects a cleaned flight schedule with this normalized
+schema:
+
+```text
+DEP_ICAO, ARR_ICAO, STD_REFTZ, STA_REFTZ, ATD_REFTZ, ATA_REFTZ,
+AC_OPER, AC_REG, AC_WAKE
+```
+
+Any dataset with those columns can be used directly as `schedule_file` in
+`PipelineConfig`. The built-in cleaning step is optional: it is a convenience
+utility for converting EUROCONTROL-style flight records into the normalized
+ROSTER input format.
+
+For that optional cleaner, the raw EUROCONTROL-style file must include, at
+minimum, the following source columns:
+
+```text
+ADEP, ADES, FILED OFF BLOCK TIME, FILED ARRIVAL TIME,
+ACTUAL OFF BLOCK TIME, ACTUAL ARRIVAL TIME,
+AC Type, AC Operator, AC Registration
+```
+
+The cleaner validates airport ICAO codes, parses timestamps, adds ICAO wake
+turbulence categories from aircraft type data, and writes the normalized schema
+above.
+
+## Quick Start
+
+Run the full tutorial pipeline from the project root:
+
+```bash
+python tutorials/tutorial_pipeline.py --seed 42 --suffix demo
+```
+
+The seed controls stochastic sampling. The optional suffix is appended to
+generated files, so `--suffix demo` produces outputs such as
+`schedule_demo.csv`.
+
+## Pipeline
+
+The standard tutorial workflow runs the following stages:
+
+1. Optionally clean historical flight records into the normalized ROSTER schema.
+2. Build empirical Markov transition tables and sample fleet initial
+   conditions.
+3. Analyze scheduled turnaround and flight-time distributions.
+4. Generate auxiliary simulator input files for airlines, airports, fleet, and
+   routes.
+5. Generate a synthetic schedule through greedy forward construction with
+   airport capacity checks.
+
+Intermediate analysis files are written under `computed/`, including
+`initial_conditions`, `markov`, scheduled flight-time distributions, and
+turnaround profiles. Simulator-facing outputs are written under `output/`,
+including `airlines`, `airports`, `fleet`, `routes`, `phys_ta`, and `schedule`.
+
+## Configuration
+
+Runtime window behavior can be configured in `tutorials/params.yaml`:
+
+```yaml
+REFTZ: UTC
+WINDOW_START: "00:00"
+WINDOW_LENGTH_HOURS: 24
+ACTUAL_TIMES: false
+```
+
+`REFTZ` defines the reference timezone used for time-of-day and day-boundary
+logic. `WINDOW_START` and `WINDOW_LENGTH_HOURS` define the simulated operating
+window. `ACTUAL_TIMES` controls whether actual timestamp columns are required
+and used by stages that support them.
+
+Programmatic workflows use `roster_generator.PipelineConfig` to define input
+paths, output paths, random seed, suffix, time-window settings, and optional
+manipulation callbacks.
+
+## Schedule manipulation
+
+ROSTER supports controlled scenario manipulation without editing the generated
+analysis tables by hand:
+
+- `manipulation_fn` modifies scalar distribution parameters at runtime, such as
+  turnaround distributions, fleet-size parameters, route durations, physical
+  turnaround minima, and prior-day probabilities.
+- `markov_manipulation_fn` receives a `MarkovContext` and reweights existing
+  destination probabilities before each Markov row is normalized.
+
+See `tutorials/tutorial_manipulation.py` for a worked example of both hooks.
+
+## Some Features Of ROSTER
+
+- Written in Python 3 and installable from a local checkout.
+- Reproducible stochastic generation through explicit random seeds.
+- Empirical Markov transition models for aircraft continuation behavior.
+- Synthetic fleet initial-condition sampling from historical records.
+- Reference-timezone operating windows with configurable start time and length.
+- Wake-category handling based on aircraft type data.
+- Scheduled turnaround and flight-time distribution analysis.
+- Airport capacity-aware schedule construction.
+- CSV outputs suitable for downstream simulation workflows.
+- Unit tests covering cleaning, configuration, distributions, Markov models,
+  auxiliary files, and schedule generation.
+
+## Testing
+
+Run the test suite from the project root:
+
+```bash
+pytest
+```
+
+## Contributions
+
+Contributions are welcome from researchers and developers. Please
+keep changes focused, add or update tests for behavioural changes.
+
+## License
+
+ROSTER is distributed under the GNU General Public License v3. See `LICENSE`
+for the full license text.

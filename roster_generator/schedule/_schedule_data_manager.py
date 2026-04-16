@@ -339,7 +339,21 @@ class DataManager:
             self.rolling_capacity[row.airport_id] = float(row.rolling_capacity)
             self.burst_capacity[row.airport_id] = float(row.burst_capacity)
 
+        self._apply_airport_manipulation()
         self._build_tz_offsets()
+
+    def _apply_airport_manipulation(self) -> None:
+        """Apply manipulation_fn to airport rolling and burst capacities."""
+        for airport_id in list(self.rolling_capacity.keys()):
+            result = self._manipulation_fn(
+                {
+                    "rolling_capacity": self.rolling_capacity[airport_id],
+                    "burst_capacity": self.burst_capacity[airport_id],
+                },
+                f"airport_capacity {airport_id}",
+            )
+            self.rolling_capacity[airport_id] = max(1.0, float(result["rolling_capacity"]))
+            self.burst_capacity[airport_id] = max(1.0, float(result["burst_capacity"]))
 
     # ---------------------------------------------------------
     # Helper Utilities
