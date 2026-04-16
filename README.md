@@ -14,18 +14,32 @@ times and turnarounds, and fleet initial conditions.
 
 ## Installation
 
-ROSTER requires Python 3.12 or newer. From a local checkout:
+ROSTER requires Python 3.12 or newer. Install the latest released package with:
+
+```bash
+python -m pip install roster-generator
+```
+
+The installed import package is named `roster_generator`:
+
+```python
+import roster_generator
+```
+
+For local development from a source checkout:
 
 ```bash
 cd roster
 python -m venv .venv
 source .venv/bin/activate
 python -m pip install --upgrade pip
-python -m pip install -e .
+python -m pip install -e ".[dev]"
 ```
 
-The package dependencies are declared in `pyproject.toml` and include
-`pandas`, `numpy`, `airportsdata`, `aircraft-list`, `pytz`, and `pytest`.
+Runtime dependencies are declared in `pyproject.toml` and include `pandas`,
+`numpy`, `airportsdata`, `aircraft-list`, and `pytz`. Development and release
+tools, including `pytest`, `build`, and `twine`, are available through the
+optional `dev` extra.
 
 ## Input Data
 
@@ -57,7 +71,7 @@ above.
 
 ## Quick Start
 
-Run the full tutorial pipeline from the project root:
+Run the full tutorial pipeline from a source checkout:
 
 ```bash
 python tutorials/tutorial_pipeline.py --seed 42 --suffix demo
@@ -120,7 +134,7 @@ See `tutorials/tutorial_manipulation.py` for a worked example of both hooks.
 
 ## Some Features Of ROSTER
 
-- Written in Python 3 and installable from a local checkout.
+- Written in Python 3 and installable with pip.
 - Reproducible stochastic generation through explicit random seeds.
 - Empirical Markov transition models for aircraft continuation behavior.
 - Synthetic fleet initial-condition sampling from historical records.
@@ -137,7 +151,7 @@ See `tutorials/tutorial_manipulation.py` for a worked example of both hooks.
 Run the test suite from the project root:
 
 ```bash
-pytest
+python -m pytest
 ```
 
 ## Contributions
