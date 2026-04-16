@@ -1,8 +1,8 @@
 # ROSTER - Realistic Operational Schedules Through Empirical Records
 
-[![Python 3.12+](https://img.shields.io/badge/python-3.12%2B-blue)](pyproject.toml)
+[![PyPI version](https://img.shields.io/pypi/v/roster-generator)](https://pypi.org/project/roster-generator/)
+[![Python versions](https://img.shields.io/pypi/pyversions/roster-generator)](https://pypi.org/project/roster-generator/)
 [![License: GPLv3](https://img.shields.io/badge/license-GPLv3-blue)](LICENSE)
-[![Package: roster-generator](https://img.shields.io/badge/package-roster--generator-lightgrey)](pyproject.toml)
 
 ROSTER is a Python package for generating realistic flight
 schedules from historical data. It is designed for ATM researchers that require synthetic schedules (with or without modification) for simulation purposes.
