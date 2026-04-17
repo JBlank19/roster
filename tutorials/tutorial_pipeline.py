@@ -11,7 +11,7 @@ simulation input files:
   Stage 4: Schedule generation (greedy forward construction)
 
 Usage:
-    python main.py [--seed SEED] [--suffix SUFFIX]
+    python main.py [--seed SEED] [--suffix SUFFIX] [--schedule-file PATH]
 
 Example:
     python main.py --seed 42 --suffix 0
@@ -49,6 +49,17 @@ def main() -> int:
         "--suffix", type=str, default="",
         help="Output file suffix, e.g. '0' -> schedule_0.csv (default: none)"
     )
+    parser.add_argument(
+        "--schedule-file", type=str, default="input/september2023.csv",
+        help=(
+            "Cleaned schedule CSV to use. For BTS, first run "
+            "'python tutorials/tutorial_bts_cleaning.py' or "
+            "'python -m roster_generator.data_cleaning.clean_bts "
+            "<on_time.csv> <aircraft.csv> --output input/bts_clean.csv', "
+            "then pass "
+            "--schedule-file input/bts_clean.csv."
+        )
+    )
     args = parser.parse_args()
 
     suffix = f"_{args.suffix}" if args.suffix else ""
@@ -71,14 +82,23 @@ def main() -> int:
     # ------------------------------------------------------------------
     # Stage 0: Data Cleaning
     # ------------------------------------------------------------------
-    input_file = "input/september2023.csv"
-    if not os.path.exists(input_file):
+    default_input_file = "input/september2023.csv"
+    input_file = args.schedule_file
+    if input_file == default_input_file and not os.path.exists(input_file):
         print(f"[Main] {input_file} not found. Cleaning data...")
         roster_generator.clean_data(
             dirty_file="ECTL/Flights_20230901_20230930.csv",
             clean_file=input_file,
         )
         print("[Main] Cleaning data done.")
+    elif not os.path.exists(input_file):
+        raise FileNotFoundError(
+            f"Schedule file not found: {input_file}. For BTS, extract the "
+            "on-time schedule CSV and Schedule B-43 aircraft inventory CSV, "
+            "then run: python tutorials/tutorial_bts_cleaning.py or "
+            "python -m roster_generator.data_cleaning.clean_bts "
+            "<on_time.csv> <aircraft.csv> --output input/bts_clean.csv"
+        )
     else:
         print(f"[Main] {input_file} already exists. Skipping cleaning stage.")
 

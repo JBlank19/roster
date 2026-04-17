@@ -69,6 +69,54 @@ The cleaner validates airport ICAO codes, parses timestamps, adds ICAO wake
 turbulence categories from aircraft type data, and writes the normalized schema
 above.
 
+## Using BTS Data
+
+ROSTER can also clean BTS on-time performance downloads into the same normalized
+schema. Download the BTS source data yourself, extract the CSV files into
+`BTS/`, and run the BTS cleaning tutorial:
+
+```bash
+mkdir -p BTS
+# Put the extracted BTS on-time schedule CSV and aircraft inventory CSV in BTS/.
+# The tutorial auto-detects BTS/on_time.csv, BTS/aircraft.csv, or the default
+# extracted BTS filenames shown below.
+python tutorials/tutorial_bts_cleaning.py
+python main.py --schedule-file input/bts_clean.csv --seed 42 --suffix bts
+```
+
+You can also call the cleaner directly by passing both extracted CSV paths:
+
+```bash
+python -m roster_generator.data_cleaning.clean_bts \
+  BTS/On_Time_Reporting_Carrier_On_Time_Performance_\(1987_present\)_2024_12.csv \
+  BTS/T_F41SCHEDULE_B43.csv \
+  --output input/bts_clean.csv
+```
+
+For example, from a user workspace such as
+`/home/josu/Escritorio/main_pc/roster-workspace`, the command above expects
+the extracted CSV files under
+`/home/josu/Escritorio/main_pc/roster-workspace/BTS`.
+
+The two required BTS CSV inputs are:
+
+| Need | BTS table | Where to get it | Filename |
+| --- | --- | --- | --- |
+| Required | Reporting Carrier On-Time Performance (1987-present) schedule | <https://transtats.bts.gov/PREZIP/> | Extracted CSV, for example `On_Time_Reporting_Carrier_On_Time_Performance_(1987_present)_2024_12.csv` |
+| Required | Schedule B-43 aircraft inventory | <https://www.transtats.bts.gov/DL_SelectFields.aspx?QO_fu146_anzr=Nv4+Pn44vr4+Sv0n0pvny&gnoyr_VQ=GEH> | Extracted CSV, for example `T_F41SCHEDULE_B43.csv` |
+
+BTS on-time field definitions are documented at
+<https://transtats.bts.gov/Fields.asp?gnoyr_VQ=FGJ>. BTS Schedule B-43 fields
+are documented at <https://www.transtats.bts.gov/Fields.asp?gnoyr_VQ=GEH>.
+
+ROSTER does not download, cache, or read zipped BTS support data. Both the
+on-time schedule CSV and the Schedule B-43 aircraft inventory CSV are mandatory.
+
+BTS stores its scheduled and actual clock times as local `hhmm` values. The BTS
+cleaner localizes those times using each airport timezone, converts them into
+the normalized ROSTER timestamp convention, and writes the standard cleaned
+columns shown above.
+
 ## Quick Start
 
 Run the full tutorial pipeline from a source checkout:

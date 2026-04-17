@@ -89,3 +89,9 @@ class TestShiftedDayUtilities:
         # 03:30 UTC -> 05:30 local -> shifted by 6h = 23:30 (previous day) => 1410
         # 07:15 UTC -> 09:15 local -> shifted by 6h = 03:15 => 195
         assert minutes == [1410, 195]
+
+    def test_utc_midnight_rebins_to_new_york_previous_evening(self):
+        series = pd.Series(["2024-12-01 05:00:00"])
+        local = parse_datetime_series_to_reftz(series, "America/New_York")
+
+        assert local.iloc[0] == pd.Timestamp("2024-12-01 00:00:00")
