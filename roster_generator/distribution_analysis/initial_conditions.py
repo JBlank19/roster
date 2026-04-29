@@ -16,7 +16,7 @@ from ._initial_conditions_builders import (
     set_markov_tables as set_markov_state,
 )
 from ._initial_conditions_sampling import sample_initial_conditions
-from ._initial_conditions_types import BIN_SIZE, InitialConditionState
+from ._initial_conditions_types import InitialConditionState
 from ._initial_conditions_validation import validate_initial_conditions
 
 # Backward-compatible module-level names.
@@ -37,11 +37,6 @@ SyntheticAircraft = _types.SyntheticAircraft
 _normalize_airline_prefix = _sampling._normalize_airline_prefix
 _weighted_choice_from_counts = _sampling._weighted_choice_from_counts
 _weighted_choice_from_pairs = _sampling._weighted_choice_from_pairs
-
-
-def _round5(v):
-    """Round to nearest BIN_SIZE-minute boundary."""
-    return int(round(float(v) / BIN_SIZE) * BIN_SIZE)
 
 
 class InitialConditionModel:
