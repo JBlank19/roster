@@ -33,63 +33,6 @@ class ScheduleGenerator:
             sta=flight.sta,
         )
 
-    def _get_turnaround_candidates(
-        self,
-        aircraft: Aircraft,
-        prev_origin: str,
-        current_airport: str,
-        arrival_time: int,
-    ) -> List[Tuple[int, str, float]]:
-        """Legacy helper kept for API parity with older turnaround strategies."""
-        ta_options = self.data.get_turnaround_options(
-            aircraft.operator,
-            prev_origin,
-            current_airport,
-            aircraft.wake,
-            arrival_time,
-        )
-
-        if ta_options:
-            scheduled_times = [t for t, _ in ta_options]
-            min_ta = min(scheduled_times)
-            max_ta = max(scheduled_times)
-        else:
-            min_ta = BIN_SIZE_MINS
-            max_ta = self.window_length_mins - int(max(0, arrival_time)) + BIN_SIZE_MINS
-            max_ta = max(BIN_SIZE_MINS, min(max_ta, self.window_length_mins - BIN_SIZE_MINS))
-            ta_options = []
-
-        candidates: List[Tuple[int, str, float]] = []
-        seen: set[int] = set()
-
-        weighted_items = []
-        for ta_time, prob in ta_options:
-            rand = self.rng.random()
-            if rand == 0:
-                rand = 1e-10
-            weight = prob if prob > 0 else 1e-10
-            score = pow(rand, 1.0 / weight)
-            weighted_items.append((ta_time, prob, score))
-
-        weighted_items.sort(key=lambda x: -x[2])
-
-        for ta_time, prob, _ in weighted_items:
-            if ta_time not in seen:
-                candidates.append((ta_time, "scheduled", prob))
-                seen.add(ta_time)
-
-        for ta_time in range(min_ta, max_ta + 1, 5):
-            if ta_time not in seen:
-                candidates.append((ta_time, "interval", 0.0))
-                seen.add(ta_time)
-
-        for ta_time in range(max_ta + 5, self.window_length_mins, 5):
-            if ta_time not in seen:
-                candidates.append((ta_time, "extended", 0.0))
-                seen.add(ta_time)
-
-        return candidates
-
     def _sample_turnaround(
         self,
         aircraft: Aircraft,
