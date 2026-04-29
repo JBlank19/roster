@@ -45,11 +45,10 @@ def _default_manipulation(params: dict[str, float], dtype: str) -> dict[str, flo
 
 
 def _default_markov_manipulation(
-    params: dict[str, float],
-    context: MarkovContext,
-) -> dict[str, float] | None:
+    _params: dict[str, float],
+    _context: MarkovContext,
+) -> None:
     """Identity Markov manipulation: leaves transition weights unchanged."""
-    del params, context
     return None
 
 
