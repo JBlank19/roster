@@ -614,6 +614,71 @@ class TestScheduleRefactorGuards:
         assert stats.no_destinations == 1
         assert stats.single_flight_total == 1
         assert stats.single_flight_no_destinations == 1
+        assert len(stats.rejection_log.no_destination) == 1
+        assert stats.rejection_log.no_destination[0].reason == "missing_turnaround"
+
+    def test_generate_chain_logs_no_markov_data_reason(self, tmp_path, monkeypatch):
+        """A missing destination lookup logs no_markov_data as the no-continuation reason."""
+        data = _build_data_manager(tmp_path, seed=12)
+        tracker = CapacityTracker({"LEMD": 999, "EGLL": 999}, {"LEMD": 999, "EGLL": 999})
+        stats = GenerationStats()
+        rng = random.Random(12)
+        generator = ScheduleGenerator(data, tracker, stats, rng)
+
+        aircraft = Aircraft(
+            reg="AC778",
+            operator="IBE",
+            wake="M",
+            initial_flight=Flight(orig="LEMD", dest="EGLL", std=480, sta=600),
+        )
+        assert generator.seed_initial_flights(aircraft)
+        monkeypatch.setattr(
+            data,
+            "sample_turnaround_for_prev_origin",
+            lambda **_: (45, "intraday"),
+        )
+        monkeypatch.setattr(data, "get_destinations", lambda *_, **__: ([], "none"))
+
+        generator.generate_greedy_chain(aircraft)
+        assert stats.no_destinations == 1
+        assert stats.single_flight_total == 1
+        assert stats.single_flight_no_destinations == 1
+        assert len(stats.rejection_log.no_destination) == 1
+        assert stats.rejection_log.no_destination[0].reason == "no_markov_data"
+
+    def test_generate_chain_records_end_of_day_no_continuation(self, tmp_path, monkeypatch):
+        """End-of-day termination annotates the anchor flight and logs separately."""
+        data = _build_data_manager(tmp_path, seed=13)
+        tracker = CapacityTracker({"LEMD": 999, "EGLL": 999}, {"LEMD": 999, "EGLL": 999})
+        stats = GenerationStats()
+        rng = random.Random(13)
+        generator = ScheduleGenerator(data, tracker, stats, rng)
+
+        aircraft = Aircraft(
+            reg="AC779",
+            operator="IBE",
+            wake="M",
+            initial_flight=Flight(orig="LEMD", dest="EGLL", std=480, sta=600),
+        )
+        assert generator.seed_initial_flights(aircraft)
+        anchor_flight = aircraft.chain[-1]
+        monkeypatch.setattr(
+            data,
+            "sample_turnaround_for_prev_origin",
+            lambda **_: (900, "next_day"),
+        )
+
+        generator.generate_greedy_chain(aircraft)
+        assert stats.end_of_day == 1
+        assert stats.single_flight_total == 1
+        assert stats.single_flight_end_of_day == 1
+        assert stats.no_destinations == 0
+        assert anchor_flight.turnaround_to_next_category == "next_day"
+        assert anchor_flight.turnaround_to_next_minutes == 900
+        assert len(stats.rejection_log.end_of_day) == 1
+        assert stats.rejection_log.end_of_day[0].airport == "EGLL"
+        assert stats.rejection_log.end_of_day[0].std_mins == 1500
+        assert stats.rejection_log.end_of_day[0].chain_length == 1
 
 
 # ---------------------------------------------------------------------------
