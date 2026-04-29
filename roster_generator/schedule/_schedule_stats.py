@@ -13,11 +13,6 @@ class GenerationStats:
     successful_chains: int = 0
     total_flights: int = 0
 
-    ta_scheduled_primary: int = 0
-    ta_scheduled_secondary: int = 0
-    ta_interval_search: int = 0
-    ta_extended: int = 0
-
     end_of_day: int = 0
     no_destinations: int = 0
     capacity_exhausted: int = 0
@@ -52,16 +47,6 @@ class GenerationStats:
         """Store at most two capacity-exhausted examples."""
         if len(self.examples_capacity_exhausted) < 2:
             self.examples_capacity_exhausted.append(msg)
-
-    def _turnaround_selection_lines(self) -> List[str]:
-        return [
-            "--- Turnaround Selection ---",
-            f"  Scheduled (Primary): {self.ta_scheduled_primary}",
-            f"  Scheduled (Secondary): {self.ta_scheduled_secondary}",
-            f"  Interval search: {self.ta_interval_search}",
-            f"  Extended (+5m): {self.ta_extended}",
-            "",
-        ]
 
     def _termination_lines(self) -> List[str]:
         return [
@@ -112,7 +97,6 @@ class GenerationStats:
             f"Total flights: {self.total_flights}",
             "",
         ]
-        lines.extend(self._turnaround_selection_lines())
         lines.extend(self._termination_lines())
         lines.extend(self._fallback_lines())
         lines.extend(self._single_flight_lines())
