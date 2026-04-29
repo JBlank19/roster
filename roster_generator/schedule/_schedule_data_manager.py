@@ -638,18 +638,6 @@ class DataManager:
         self.turnaround_lookup_stats["intraday_resample_guard"] += 1
         return max_intraday, "intraday"
 
-    def get_turnaround_options(
-        self,
-        op: str,
-        prev_origin: str,
-        origin: str,
-        wake: str,
-        arr_utc_mins: int,
-    ) -> List[Tuple[int, float]]:
-        """Intentional API stub: no fallback option list is currently provided."""
-        del op, prev_origin, origin, wake, arr_utc_mins
-        return []
-
     # ---------------------------------------------------------
     # Route Lookup
     # ---------------------------------------------------------
