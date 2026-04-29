@@ -1,14 +1,11 @@
 import math
 import random
 from collections import defaultdict
-from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
-import airportsdata
 import numpy as np
 import pandas as pd
-import pytz
 
 # Shared constants
 BIN_SIZE_MINS = 5
@@ -330,7 +327,7 @@ class DataManager:
             self.routes[key] = int(round(result["scheduled_time"]))
 
     def _load_airport_data(self) -> None:
-        """Load airport capacity limits and timezone offsets."""
+        """Load airport capacity limits."""
         airports_df = pd.read_csv(self.airports_path)
         self.rolling_capacity: Dict[str, float] = {}
         self.burst_capacity: Dict[str, float] = {}
@@ -340,7 +337,6 @@ class DataManager:
             self.burst_capacity[row.airport_id] = float(row.burst_capacity)
 
         self._apply_airport_manipulation()
-        self._build_tz_offsets()
 
     def _apply_airport_manipulation(self) -> None:
         """Apply manipulation_fn to airport rolling and burst capacities."""
@@ -420,20 +416,6 @@ class DataManager:
         nonzero = totals > 0
         probs[nonzero] = next_hourly[nonzero] / totals[nonzero]
         return probs
-
-    def _build_tz_offsets(self) -> None:
-        """Build timezone offset cache for tracked airports."""
-        airports_db = airportsdata.load("ICAO")
-        ref_date = datetime(2023, 9, 15)
-        self.tz_offset: Dict[str, int] = {}
-
-        for airport in set(self.rolling_capacity.keys()):
-            try:
-                tz_str = airports_db.get(airport, {}).get("tz", "UTC")
-                tz = pytz.timezone(tz_str)
-                self.tz_offset[airport] = int(tz.utcoffset(ref_date).total_seconds() // 3600)
-            except Exception:
-                self.tz_offset[airport] = 0
 
     def get_reftz_hour(self, reftz_mins: int) -> int:
         """Convert minute-of-window to REFTZ hour bin."""
@@ -648,7 +630,7 @@ class DataManager:
         dest: str,
         op: str,
         wake: str,
-        dep_utc_mins: int = None,
+        dep_utc_mins: int | None = None,
     ) -> int:
         """Lookup route duration using operator-specific then ALL fallback."""
         del dep_utc_mins
