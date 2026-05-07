@@ -21,6 +21,12 @@ from pathlib import Path
 import pandas as pd
 
 from roster_generator.config import PipelineConfig
+from roster_generator.output import (
+    DEFAULT_OUTPUT_MODE,
+    add_output_arguments,
+    reset_log_file,
+    roster_print,
+)
 
 # --- Column aliases ---
 
@@ -48,17 +54,17 @@ def generate_airlines(config: PipelineConfig) -> None:
     FileNotFoundError
         If the initial-conditions file does not exist.
     """
-    print("[Airlines] --- AIRLINE CATALOGUE ---")
+    roster_print("[Airlines] --- AIRLINE CATALOGUE ---", config=config)
 
     input_path = config.analysis_path("initial_conditions")
     output_path = config.output_path("airlines")
 
     if not input_path.exists():
-        print(f"[Airlines] Error: initial conditions file not found ({input_path}).")
+        roster_print(f"[Airlines] Error: initial conditions file not found ({input_path}).", config=config)
         sys.exit(1)
 
     # 1. Load initial conditions
-    print(f"[Airlines] Initial conditions: {input_path}")
+    roster_print(f"[Airlines] Initial conditions: {input_path}", config=config)
     df = pd.read_csv(input_path)
 
     # 2. Extract unique AC_OPER values
@@ -74,9 +80,9 @@ def generate_airlines(config: PipelineConfig) -> None:
     config.output_dir.mkdir(parents=True, exist_ok=True)
     airlines.to_csv(output_path, index=False)
 
-    print(f"[Airlines] Saved: {output_path} ({len(airlines)} unique airlines)")
-    print(f"[Airlines]   {airlines['airline_id'].tolist()}")
-    print("[Airlines] --- SUCCESS ---")
+    roster_print(f"[Airlines] Saved: {output_path} ({len(airlines)} unique airlines)", config=config)
+    roster_print(f"[Airlines] {airlines['airline_id'].tolist()}", config=config)
+    roster_print("[Airlines] --- SUCCESS ---", config=config)
 
 
 if __name__ == "__main__":
@@ -87,13 +93,18 @@ if __name__ == "__main__":
     parser.add_argument("--seed", type=int, default=42, help="RNG seed")
     # schedule_file is not used here but PipelineConfig requires it
     parser.add_argument("--schedule", type=str, default="", help="Path to schedule CSV (unused)")
+    add_output_arguments(parser)
     args = parser.parse_args()
 
+    output_mode = args.output_mode or DEFAULT_OUTPUT_MODE
     cfg = PipelineConfig(
         schedule_file=Path(args.schedule) if args.schedule else Path("."),
         analysis_dir=Path(args.analysis_dir),
         output_dir=Path(args.output_dir),
         seed=args.seed,
         suffix=f"_{args.suffix}" if args.suffix else "",
+        output_mode=output_mode,
+        log_file=args.log_file,
     )
+    reset_log_file(config=cfg)
     generate_airlines(cfg)

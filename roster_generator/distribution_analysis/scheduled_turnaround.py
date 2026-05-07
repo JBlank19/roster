@@ -20,6 +20,13 @@ import numpy as np
 import pandas as pd
 
 from roster_generator.config import PipelineConfig
+from roster_generator.output import (
+    DEFAULT_OUTPUT_MODE,
+    OutputConfig,
+    add_output_arguments,
+    reset_log_file,
+    roster_print,
+)
 from roster_generator.time_window import (
     DEFAULT_REFTZ,
     DEFAULT_WINDOW_LENGTH_HOURS,
@@ -102,6 +109,7 @@ def _prepare_turnaround_events(
     reftz: str = DEFAULT_REFTZ,
     window_start_mins: int = 0,
     window_length_mins: int = DEFAULT_WINDOW_LENGTH_HOURS * 60,
+    output_config: OutputConfig | None = None,
 ) -> pd.DataFrame:
     """Build linked turnaround events and keep day_gap >= 0."""
     _require_columns(
@@ -115,7 +123,7 @@ def _prepare_turnaround_events(
         zzz_count = int(zzz_mask.sum())
         if zzz_count:
             df.loc[zzz_mask, AIRLINE_COL] = df.loc[zzz_mask, AC_REG_COL].astype(str).str.strip()
-        print(f"  Remapped {zzz_count} flights: AC_OPER='ZZZ' -> AC_REG")
+        roster_print(f"[Turnaround] Remapped {zzz_count} flights: AC_OPER='ZZZ' -> AC_REG", config=output_config)
 
     df["AC_WAKE"] = df["AC_WAKE"].fillna("").astype(str).str.upper().str.strip()
 
@@ -147,7 +155,7 @@ def _prepare_turnaround_events(
 
     df["DAY_GAP"] = (df["STD_SHIFTED"].dt.normalize() - df["PREV_STA"].dt.normalize()).dt.days
     df = df[np.isfinite(df["DAY_GAP"])]
-    df = df[df["DAY_GAP"].isin([0, 1])]  # Exclude multi-day layovers (maintenance, AOG, etc.)
+    df = df[df["DAY_GAP"].isin([0, 1])] # Exclude multi-day layovers (maintenance, AOG, etc.)
 
     df["CATEGORY"] = np.where(df["DAY_GAP"] == 0, INTRADAY_CATEGORY, NEXT_DAY_CATEGORY)
 
@@ -287,7 +295,7 @@ def analyze_turnaround_distribution(config: PipelineConfig) -> None:
     ValueError
         If no valid turnaround events remain after filtering.
     """
-    print("[Turnaround] --- ROUTE-AWARE PARAMETRIC TURNAROUND ANALYSIS ---")
+    roster_print("[Turnaround] --- ROUTE-AWARE PARAMETRIC TURNAROUND ANALYSIS ---", config=config)
 
     intraday_path = config.analysis_path("scheduled_turnaround_intraday_params")
     temporal_path = config.analysis_path("scheduled_turnaround_temporal_profile")
@@ -295,21 +303,23 @@ def analyze_turnaround_distribution(config: PipelineConfig) -> None:
     if not config.schedule_file.exists():
         raise FileNotFoundError(f"Schedule file not found: {config.schedule_file}")
 
-    print(f"[Turnaround] Schedule: {config.schedule_file}")
+    roster_print(f"[Turnaround] Schedule: {config.schedule_file}", config=config)
     df = pd.read_csv(config.schedule_file)
     events = _prepare_turnaround_events(
         df,
         reftz=config.reftz,
         window_start_mins=config.window_start_mins,
         window_length_mins=config.window_length_mins,
+        output_config=config,
     )
 
-    print(f"[Turnaround]   Valid turnaround events: {len(events)}")
+    roster_print(f"[Turnaround] Valid turnaround events: {len(events)}", config=config)
     cat_counts = events["category"].value_counts().to_dict()
-    print(
-        "[Turnaround]   Categories: "
+    roster_print(
+        "[Turnaround] Categories: "
         f"intraday={cat_counts.get(INTRADAY_CATEGORY, 0)}, "
-        f"next_day={cat_counts.get(NEXT_DAY_CATEGORY, 0)}"
+        f"next_day={cat_counts.get(NEXT_DAY_CATEGORY, 0)}",
+        config=config,
     )
     if events.empty:
         raise ValueError("No valid turnaround events found.")
@@ -341,25 +351,35 @@ def analyze_turnaround_distribution(config: PipelineConfig) -> None:
     intraday_df.to_csv(intraday_path, index=False)
     temporal_df.to_csv(temporal_path, index=False)
 
-    print(f"[Turnaround] Saved intraday params: {intraday_path} ({len(intraday_df)} rows)")
-    print(f"[Turnaround] Saved temporal profile: {temporal_path} ({len(temporal_df)} rows)")
-    print("[Turnaround] --- SUCCESS ---")
+    roster_print(f"[Turnaround] Saved intraday params: {intraday_path} ({len(intraday_df)} rows)", config=config)
+    roster_print(f"[Turnaround] Saved temporal profile: {temporal_path} ({len(temporal_df)} rows)", config=config)
+    roster_print("[Turnaround] --- SUCCESS ---", config=config)
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Route-aware scheduled turnaround fitter")
     parser.add_argument("--schedule", type=str, required=True, help="Path to schedule CSV")
     parser.add_argument("--analysis-dir", type=str, required=True, help="Analysis output directory")
-    parser.add_argument("--output-dir", type=str, default=None, help="Final output directory (defaults to analysis-dir)")
+    parser.add_argument(
+        "--output-dir",
+        type=str,
+        default=None,
+        help="Final output directory (defaults to analysis-dir)",
+    )
     parser.add_argument("--suffix", type=str, default="", help="Suffix for output filenames")
     parser.add_argument("--seed", type=int, default=42, help="RNG seed")
+    add_output_arguments(parser)
     args = parser.parse_args()
 
+    output_mode = args.output_mode or DEFAULT_OUTPUT_MODE
     cfg = PipelineConfig(
         schedule_file=Path(args.schedule),
         analysis_dir=Path(args.analysis_dir),
         output_dir=Path(args.output_dir or args.analysis_dir),
         seed=args.seed,
         suffix=f"_{args.suffix}" if args.suffix else "",
+        output_mode=output_mode,
+        log_file=args.log_file,
     )
+    reset_log_file(config=cfg)
     analyze_turnaround_distribution(cfg)

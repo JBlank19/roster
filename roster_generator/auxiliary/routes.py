@@ -20,6 +20,13 @@ from pathlib import Path
 import pandas as pd
 
 from roster_generator.config import PipelineConfig
+from roster_generator.output import (
+    DEFAULT_OUTPUT_MODE,
+    OutputConfig,
+    add_output_arguments,
+    reset_log_file,
+    roster_print,
+)
 from roster_generator.time_window import DEFAULT_REFTZ, parse_datetime_series_to_reftz
 
 # --- Column aliases ---
@@ -50,6 +57,7 @@ def _prepare_flights(
     reftz: str = DEFAULT_REFTZ,
     *,
     actual_times: bool = False,
+    output_config: OutputConfig | None = None,
 ) -> pd.DataFrame:
     """Normalise columns, remap ZZZ airlines, compute flight durations."""
     required = [AC_REG_COL, AIRLINE_COL, AC_WAKE_COL, DEP_COL, ARR_COL, STD_COL, STA_COL]
@@ -67,7 +75,7 @@ def _prepare_flights(
         zzz_count = int(zzz_mask.sum())
         if zzz_count:
             df.loc[zzz_mask, AIRLINE_COL] = df.loc[zzz_mask, AC_REG_COL].astype(str).str.strip()
-        print(f"  Remapped {zzz_count} flights: AC_OPER='ZZZ' -> AC_REG")
+        roster_print(f"[Routes] Remapped {zzz_count} flights: AC_OPER='ZZZ' -> AC_REG", config=output_config)
 
     df[AC_WAKE_COL] = df[AC_WAKE_COL].fillna("").astype(str).str.upper().str.strip()
 
@@ -152,7 +160,7 @@ def generate_routes(config: PipelineConfig) -> None:
     ValueError
         If no flights match the Markov routes.
     """
-    print("[Routes] --- ROUTE FLIGHT-TIME CATALOGUE ---")
+    roster_print("[Routes] --- ROUTE FLIGHT-TIME CATALOGUE ---", config=config)
 
     markov_path = config.analysis_path("markov")
     output_path = config.output_path("routes")
@@ -163,24 +171,29 @@ def generate_routes(config: PipelineConfig) -> None:
         raise FileNotFoundError(f"Markov file not found: {markov_path}")
 
     # 1. Load markov routes
-    print(f"[Routes] Markov file: {markov_path}")
+    roster_print(f"[Routes] Markov file: {markov_path}", config=config)
     markov_df = pd.read_csv(markov_path)
     routes = markov_df[[DEP_COL, ARR_COL, AC_WAKE_COL]].drop_duplicates()
-    print(f"[Routes]   {len(routes)} unique route/wake combinations")
+    roster_print(f"[Routes] {len(routes)} unique route/wake combinations", config=config)
 
     # 2. Load and prepare schedule
-    print(f"[Routes] Schedule: {config.schedule_file}")
+    roster_print(f"[Routes] Schedule: {config.schedule_file}", config=config)
     if config.actual_times:
-        print("[Routes]   Using actual flight-time medians")
+        roster_print("[Routes] Using actual flight-time medians", config=config)
     else:
-        print("[Routes]   Using scheduled-only medians for route time")
+        roster_print("[Routes] Using scheduled-only medians for route time", config=config)
     df = pd.read_csv(config.schedule_file)
-    df = _prepare_flights(df, reftz=config.reftz, actual_times=config.actual_times)
+    df = _prepare_flights(
+        df,
+        reftz=config.reftz,
+        actual_times=config.actual_times,
+        output_config=config,
+    )
 
     if df.empty:
         raise ValueError("No valid flights after normalisation.")
 
-    print(f"[Routes]   {len(df)} valid flights")
+    roster_print(f"[Routes] {len(df)} valid flights", config=config)
 
     # 3. Filter schedule to markov routes
     merged = df.merge(routes, on=[DEP_COL, ARR_COL, AC_WAKE_COL], how="inner")
@@ -188,10 +201,10 @@ def generate_routes(config: PipelineConfig) -> None:
     if merged.empty:
         raise ValueError("No flights match the Markov routes.")
 
-    print(f"[Routes]   {len(merged)} flights matching Markov routes")
+    roster_print(f"[Routes] {len(merged)} flights matching Markov routes", config=config)
 
     # 4. Build statistics
-    print("[Routes] Computing median flight times...")
+    roster_print("[Routes] Computing median flight times...", config=config)
     per_op = _build_per_operator_stats(merged)
     agnostic = _build_operator_agnostic_stats(merged)
     combined = pd.concat([per_op, agnostic], ignore_index=True)
@@ -202,9 +215,9 @@ def generate_routes(config: PipelineConfig) -> None:
     combined.to_csv(output_path, index=False)
 
     # Summary
-    print(f"[Routes] Saved: {output_path} ({len(combined)} routes)")
-    print(f"[Routes]   Wake types: {sorted(combined['wake_type'].unique())}")
-    print("[Routes] --- SUCCESS ---")
+    roster_print(f"[Routes] Saved: {output_path} ({len(combined)} routes)", config=config)
+    roster_print(f"[Routes] Wake types: {sorted(combined['wake_type'].unique())}", config=config)
+    roster_print("[Routes] --- SUCCESS ---", config=config)
 
 
 if __name__ == "__main__":
@@ -214,13 +227,18 @@ if __name__ == "__main__":
     parser.add_argument("--output-dir", type=str, required=True, help="Final output directory")
     parser.add_argument("--suffix", type=str, default="", help="Suffix for output filenames")
     parser.add_argument("--seed", type=int, default=42, help="RNG seed")
+    add_output_arguments(parser)
     args = parser.parse_args()
 
+    output_mode = args.output_mode or DEFAULT_OUTPUT_MODE
     cfg = PipelineConfig(
         schedule_file=Path(args.schedule),
         analysis_dir=Path(args.analysis_dir),
         output_dir=Path(args.output_dir),
         seed=args.seed,
         suffix=f"_{args.suffix}" if args.suffix else "",
+        output_mode=output_mode,
+        log_file=args.log_file,
     )
+    reset_log_file(config=cfg)
     generate_routes(cfg)

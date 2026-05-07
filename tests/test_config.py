@@ -82,6 +82,8 @@ class TestPipelineConfigInit:
         assert cfg.window_start == "00:00"
         assert cfg.window_length_hours == 24
         assert cfg.actual_times is False
+        assert cfg.output_mode == "terminal"
+        assert cfg.log_file is None
         assert cfg.window_start_mins == 0
         assert cfg.window_length_mins == 1440
         assert callable(cfg.markov_manipulation_fn)
@@ -96,11 +98,15 @@ class TestPipelineConfigInit:
             window_start="06:30",
             window_length_hours=18,
             actual_times="true",
+            output_mode="file",
+            log_file="log/custom.log",
         )
         assert cfg.reftz == "Europe/Madrid"
         assert cfg.window_start == "06:30"
         assert cfg.window_length_hours == 18
         assert cfg.actual_times is True
+        assert cfg.output_mode == "file"
+        assert cfg.log_file == Path("log/custom.log")
         assert cfg.window_start_mins == 390
         assert cfg.window_length_mins == 1080
 
@@ -144,6 +150,16 @@ class TestPipelineConfigInit:
                 actual_times="sometimes",
             )
 
+    def test_invalid_output_mode_raises(self, tmp_path):
+        """output_mode must be one of the supported output routes."""
+        with pytest.raises(ValueError, match="Invalid output mode"):
+            PipelineConfig(
+                schedule_file=tmp_path / "s.csv",
+                analysis_dir=tmp_path,
+                output_dir=tmp_path,
+                output_mode="loud",
+            )
+
 
 # ---------------------------------------------------------------------------
 # __post_init__ — string-to-Path coercion
@@ -180,6 +196,18 @@ class TestPostInit:
         )
         assert isinstance(cfg.output_dir, Path)
         assert cfg.output_dir == Path("/tmp/output")
+
+    def test_string_log_file_coerced_to_path(self):
+        """Passing a string for log_file should be coerced to Path."""
+        cfg = PipelineConfig(
+            schedule_file="/tmp/schedule.csv",
+            analysis_dir="/tmp/analysis",
+            output_dir="/tmp/output",
+            output_mode="file",
+            log_file="/tmp/roster.log",
+        )
+        assert isinstance(cfg.log_file, Path)
+        assert cfg.log_file == Path("/tmp/roster.log")
 
     def test_path_objects_unchanged(self, tmp_path):
         """Passing Path objects should keep them as-is."""
@@ -316,3 +344,14 @@ class TestOutputPath:
         assert cfg.analysis_path("fleet") != cfg.output_path("fleet")
         assert cfg.analysis_path("fleet").parent.name == "analysis"
         assert cfg.output_path("fleet").parent.name == "output"
+
+    def test_resolved_log_file_uses_default_log_dir_and_suffix(self, tmp_path):
+        """Default log file should live under log/ and include suffix."""
+        cfg = PipelineConfig(
+            schedule_file=tmp_path / "s.csv",
+            analysis_dir=tmp_path / "analysis",
+            output_dir=tmp_path / "output",
+            suffix="_v3",
+            output_mode="file",
+        )
+        assert cfg.resolved_log_file() == Path("log") / "roster_v3.log"

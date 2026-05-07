@@ -80,7 +80,7 @@ mkdir -p BTS
 # Put the extracted BTS on-time schedule CSV and aircraft inventory CSV in BTS/.
 # The tutorial auto-detects BTS/on_time.csv, BTS/aircraft.csv, or the default
 # extracted BTS filenames shown below.
-python tutorials/tutorial_bts_cleaning.py
+python tutorials/tutorial_bts.py
 python main.py --schedule-file input/bts_clean.csv --seed 42 --suffix bts
 ```
 
@@ -122,7 +122,7 @@ columns shown above.
 Run the full tutorial pipeline from a source checkout:
 
 ```bash
-python tutorials/tutorial_pipeline.py --seed 42 --suffix demo
+python tutorials/tutorial_basic.py --seed 42 --suffix demo
 ```
 
 The seed controls stochastic sampling. The optional suffix is appended to
@@ -156,6 +156,8 @@ REFTZ: UTC
 WINDOW_START: "00:00"
 WINDOW_LENGTH_HOURS: 24
 ACTUAL_TIMES: false
+OUTPUT_MODE: terminal
+# LOG_FILE: log/custom_roster.log
 ```
 
 `REFTZ` defines the reference timezone used for time-of-day and day-boundary
@@ -163,9 +165,30 @@ logic. `WINDOW_START` and `WINDOW_LENGTH_HOURS` define the simulated operating
 window. `ACTUAL_TIMES` controls whether actual timestamp columns are required
 and used by stages that support them.
 
+`OUTPUT_MODE` controls status messages from tutorials and pipeline stages:
+`terminal` displays progress in the console, `file` writes progress to
+`log/roster{suffix}.log` unless `LOG_FILE` or `--log-file` is set, and
+`non-verbose` suppresses all routed progress messages. CLI arguments override
+`tutorials/params.yaml`:
+
+```bash
+python tutorials/tutorial_basic.py --seed 42 --suffix demo --output-mode file
+python tutorials/tutorial_basic.py --output-mode non-verbose
+python tutorials/tutorial_basic.py --output-mode file --log-file log/custom_roster.log
+```
+
 Programmatic workflows use `roster_generator.PipelineConfig` to define input
 paths, output paths, random seed, suffix, time-window settings, and optional
 manipulation callbacks.
+
+```python
+config = roster_generator.PipelineConfig(
+    schedule_file="input/september2023.csv",
+    analysis_dir="computed",
+    output_dir="output",
+    output_mode="file",
+)
+```
 
 ## Schedule manipulation
 

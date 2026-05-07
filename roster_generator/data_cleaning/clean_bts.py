@@ -27,6 +27,14 @@ import airportsdata
 import pandas as pd
 import pytz
 
+from roster_generator.output import (
+    DEFAULT_OUTPUT_MODE,
+    OutputMode,
+    add_output_arguments,
+    reset_log_file,
+    roster_print,
+)
+
 from .clean_data import FINAL_COLUMNS, _load_wake_map
 
 ON_TIME_FIELDS_URL = "https://transtats.bts.gov/Fields.asp?gnoyr_VQ=FGJ"
@@ -96,7 +104,7 @@ class BTSCleanReport:
 
     def __str__(self) -> str:
         return (
-            "[BTS Clean] "
+            "[CleanBTS] "
             f"schedule_csv={self.schedule_csv}, "
             f"aircraft_csv={self.aircraft_csv}, "
             f"rows_read={self.rows_read}, "
@@ -114,6 +122,9 @@ def clean_bts_data(
     schedule_csv: str | Path,
     aircraft_csv: str | Path,
     clean_file: str | Path,
+    *,
+    output_mode: OutputMode | str | None = None,
+    log_file: str | Path | None = None,
 ) -> BTSCleanReport:
     """Clean BTS on-time data and write the normalized ROSTER schema.
 
@@ -165,7 +176,7 @@ def clean_bts_data(
         dropped_missing_tail=counters["dropped_missing_tail"],
         dropped_missing_wake=counters["dropped_missing_wake"],
     )
-    print(report)
+    roster_print(report, output_mode=output_mode, log_file=log_file)
     return report
 
 
@@ -517,11 +528,16 @@ def main() -> None:
         help="Extracted Schedule B-43 aircraft inventory CSV.",
     )
     parser.add_argument("--output", required=True, help="Path to the cleaned output CSV.")
+    add_output_arguments(parser)
     args = parser.parse_args()
+    output_mode = args.output_mode or DEFAULT_OUTPUT_MODE
+    log_file = reset_log_file(output_mode=output_mode, log_file=args.log_file) or args.log_file
     clean_bts_data(
         args.schedule_csv,
         args.aircraft_csv,
         args.output,
+        output_mode=output_mode,
+        log_file=log_file,
     )
 
 

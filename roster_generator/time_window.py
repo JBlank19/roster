@@ -10,6 +10,8 @@ from typing import Any
 import pandas as pd
 import pytz
 
+from .output import DEFAULT_OUTPUT_MODE, OutputMode, validate_log_file, validate_output_mode
+
 DEFAULT_REFTZ = "UTC"
 DEFAULT_WINDOW_START = "00:00"
 DEFAULT_WINDOW_LENGTH_HOURS = 24
@@ -19,11 +21,15 @@ PARAM_KEY_REFTZ = "REFTZ"
 PARAM_KEY_WINDOW_START = "WINDOW_START"
 PARAM_KEY_WINDOW_LENGTH_HOURS = "WINDOW_LENGTH_HOURS"
 PARAM_KEY_ACTUAL_TIMES = "ACTUAL_TIMES"
+PARAM_KEY_OUTPUT_MODE = "OUTPUT_MODE"
+PARAM_KEY_LOG_FILE = "LOG_FILE"
 ALLOWED_PARAM_KEYS = {
     PARAM_KEY_REFTZ,
     PARAM_KEY_WINDOW_START,
     PARAM_KEY_WINDOW_LENGTH_HOURS,
     PARAM_KEY_ACTUAL_TIMES,
+    PARAM_KEY_OUTPUT_MODE,
+    PARAM_KEY_LOG_FILE,
 }
 
 WINDOW_START_PATTERN = re.compile(r"^(?:[01]\d|2[0-3]):[0-5]\d$")
@@ -119,6 +125,8 @@ class WindowConfig:
     window_start: str = DEFAULT_WINDOW_START
     window_length_hours: int = DEFAULT_WINDOW_LENGTH_HOURS
     actual_times: bool = DEFAULT_ACTUAL_TIMES
+    output_mode: OutputMode = DEFAULT_OUTPUT_MODE
+    log_file: Path | None = None
 
     @property
     def window_start_mins(self) -> int:
@@ -183,9 +191,15 @@ def resolve_window_config(raw_params: dict[str, Any]) -> WindowConfig:
     actual_times = validate_actual_times(
         raw_params.get(PARAM_KEY_ACTUAL_TIMES, DEFAULT_ACTUAL_TIMES)
     )
+    output_mode = validate_output_mode(
+        raw_params.get(PARAM_KEY_OUTPUT_MODE, DEFAULT_OUTPUT_MODE)
+    )
+    log_file = validate_log_file(raw_params.get(PARAM_KEY_LOG_FILE))
     return WindowConfig(
         reftz=reftz,
         window_start=window_start,
         window_length_hours=window_length_hours,
         actual_times=actual_times,
+        output_mode=output_mode,
+        log_file=log_file,
     )

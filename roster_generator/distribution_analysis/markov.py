@@ -27,6 +27,7 @@ import numpy as np
 import pandas as pd
 
 from roster_generator.config import MarkovContext, PipelineConfig
+from roster_generator.output import OutputConfig, roster_print
 from roster_generator.time_window import (
     DEFAULT_REFTZ,
     DEFAULT_WINDOW_LENGTH_HOURS,
@@ -93,6 +94,7 @@ def _prepare_base_flights(
     reftz: str = DEFAULT_REFTZ,
     window_start_mins: int = 0,
     window_length_mins: int = DEFAULT_WINDOW_LENGTH_HOURS * 60,
+    output_config: OutputConfig | None = None,
 ):
     """Normalise raw schedule columns, apply filters, and drop unusable rows.
 
@@ -111,7 +113,7 @@ def _prepare_base_flights(
         zzz_count = int(zzz_mask.sum())
         if zzz_count:
             df.loc[zzz_mask, AIRLINE_COL] = df.loc[zzz_mask, AC_REG_COL].astype(str).str.strip()
-        print(f"  Remapped {zzz_count} flights: AC_OPER='ZZZ' -> AC_REG")
+        roster_print(f"[Markov] Remapped {zzz_count} flights: AC_OPER='ZZZ' -> AC_REG", config=output_config)
 
     for c in [AC_REG_COL, AIRLINE_COL, DEP_COL, ARR_COL]:
         df[c] = df[c].fillna("").astype(str).str.strip()
@@ -136,7 +138,7 @@ def _prepare_base_flights(
         af = str(airline_filter).strip().upper()
         before = len(df)
         df = df[df[AIRLINE_COL] == af].copy()
-        print(f"  Airline filter {af}: {len(df)} rows from {before}")
+        roster_print(f"[Markov] Airline filter {af}: {len(df)} rows from {before}", config=output_config)
 
     df = df[df[DEP_COL] != df[ARR_COL]].copy()
     if df.empty:
@@ -375,10 +377,10 @@ def generate_markov(config: PipelineConfig, airline_filter: str | None = None) -
     seed = config.seed
     suffix = config.suffix
 
-    print("[Markov] --- Synthetic Initial Conditions + Continuation ---")
-    print(f"[Markov] Using SEED={seed}")
+    roster_print("[Markov] --- Synthetic Initial Conditions + Continuation ---", config=config)
+    roster_print(f"[Markov] Using SEED={seed}", config=config)
     if airline_filter:
-        print(f"[Markov] Filtering for airline: {airline_filter}")
+        roster_print(f"[Markov] Filtering for airline: {airline_filter}", config=config)
 
     np.random.seed(seed)
     random.seed(seed)
@@ -387,7 +389,7 @@ def generate_markov(config: PipelineConfig, airline_filter: str | None = None) -
         raise FileNotFoundError(f"Schedule file not found: {config.schedule_file}")
 
     df = pd.read_csv(config.schedule_file)
-    print(f"[Markov] Schedule: {config.schedule_file}")
+    roster_print(f"[Markov] Schedule: {config.schedule_file}", config=config)
 
     base_df = _prepare_base_flights(
         df,
@@ -395,8 +397,9 @@ def generate_markov(config: PipelineConfig, airline_filter: str | None = None) -
         reftz=config.reftz,
         window_start_mins=config.window_start_mins,
         window_length_mins=config.window_length_mins,
+        output_config=config,
     )
-    print(f"[Markov]   {base_df[AC_REG_COL].nunique()} unique aircraft in normalized schedule")
+    roster_print(f"[Markov] {base_df[AC_REG_COL].nunique()} unique aircraft in normalized schedule", config=config)
 
     # Step 1: Markov transitions
     final_markov, markov_hourly, markov_fallback_hourly = _build_markov_tables(
@@ -434,10 +437,10 @@ def generate_markov(config: PipelineConfig, airline_filter: str | None = None) -
     prior_only_rows = int((ic_df["PRIOR_ONLY"].astype(int) == 1).sum())
     single_flights = int(ic_df["SINGLE_FLIGHT"].fillna(0).astype(int).sum())
 
-    print(f"[Markov] Fleet size (synthetic): {len(ic_df)}")
-    print(f"[Markov]   Prior rows: {prior_rows}")
-    print(f"[Markov]   Prior-only rows: {prior_only_rows}")
-    print(f"[Markov]   Single-flight rows: {single_flights}")
-    print(f"[Markov] Saved: {initial_conditions_path}")
-    print(f"[Markov] Saved: {markov_path} ({len(final_markov)} transitions)")
-    print(f"[Markov] Saved: {phys_ta_path} ({len(phys_ta_df)} rows)")
+    roster_print(f"[Markov] Fleet size (synthetic): {len(ic_df)}", config=config)
+    roster_print(f"[Markov] Prior rows: {prior_rows}", config=config)
+    roster_print(f"[Markov] Prior-only rows: {prior_only_rows}", config=config)
+    roster_print(f"[Markov] Single-flight rows: {single_flights}", config=config)
+    roster_print(f"[Markov] Saved: {initial_conditions_path}", config=config)
+    roster_print(f"[Markov] Saved: {markov_path} ({len(final_markov)} transitions)", config=config)
+    roster_print(f"[Markov] Saved: {phys_ta_path} ({len(phys_ta_df)} rows)", config=config)

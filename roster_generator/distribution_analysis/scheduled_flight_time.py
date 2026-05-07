@@ -23,6 +23,13 @@ import numpy as np
 import pandas as pd
 
 from roster_generator.config import PipelineConfig
+from roster_generator.output import (
+    DEFAULT_OUTPUT_MODE,
+    OutputConfig,
+    add_output_arguments,
+    reset_log_file,
+    roster_print,
+)
 from roster_generator.time_window import (
     DEFAULT_REFTZ,
     DEFAULT_WINDOW_LENGTH_HOURS,
@@ -60,6 +67,7 @@ def _prepare_flights(
     reftz: str = DEFAULT_REFTZ,
     window_start_mins: int = 0,
     window_length_mins: int = DEFAULT_WINDOW_LENGTH_HOURS * 60,
+    output_config: OutputConfig | None = None,
 ) -> pd.DataFrame:
     """Normalise columns, remap ZZZ airlines, compute flight duration and bins."""
     _require_columns(
@@ -74,7 +82,7 @@ def _prepare_flights(
         zzz_count = int(zzz_mask.sum())
         if zzz_count:
             df.loc[zzz_mask, AIRLINE_COL] = df.loc[zzz_mask, AC_REG_COL].astype(str).str.strip()
-        print(f"  Remapped {zzz_count} flights: AC_OPER='ZZZ' -> AC_REG")
+        roster_print(f"[FlightTime] Remapped {zzz_count} flights: AC_OPER='ZZZ' -> AC_REG", config=output_config)
 
     df["AC_WAKE"] = df["AC_WAKE"].fillna("").astype(str).str.upper().str.strip()
 
@@ -160,29 +168,30 @@ def analyze_flight_time_distribution(config: PipelineConfig) -> None:
     ValueError
         If no valid flights remain after normalisation.
     """
-    print("[FlightTime] --- HOURLY FLIGHT TIME ANALYSIS ---")
+    roster_print("[FlightTime] --- HOURLY FLIGHT TIME ANALYSIS ---", config=config)
 
     output_path = config.analysis_path("scheduled_flight_time")
 
     if not config.schedule_file.exists():
         raise FileNotFoundError(f"Schedule file not found: {config.schedule_file}")
 
-    print(f"[FlightTime] Schedule: {config.schedule_file}")
+    roster_print(f"[FlightTime] Schedule: {config.schedule_file}", config=config)
     df = pd.read_csv(config.schedule_file)
     df = _prepare_flights(
         df,
         reftz=config.reftz,
         window_start_mins=config.window_start_mins,
         window_length_mins=config.window_length_mins,
+        output_config=config,
     )
 
     if df.empty:
         raise ValueError("No valid flights after normalisation.")
 
-    print(f"[FlightTime]   {len(df)} valid flights")
+    roster_print(f"[FlightTime] {len(df)} valid flights", config=config)
 
     # Per-operator + operator-agnostic hourly distributions
-    print("[FlightTime] Computing hourly distributions...")
+    roster_print("[FlightTime] Computing hourly distributions...", config=config)
     hourly_df = _build_hourly_distributions(df)
     all_operator_df = _build_operator_agnostic_distributions(df)
     combined = pd.concat([hourly_df, all_operator_df], ignore_index=True)
@@ -195,25 +204,35 @@ def analyze_flight_time_distribution(config: PipelineConfig) -> None:
     n_routes = combined.groupby(["origin_id", "dest_id"]).ngroups
     total_routes = df.groupby([DEP_STATION_COL, ARR_STATION_COL]).ngroups
 
-    print(f"[FlightTime] Saved: {output_path} ({len(combined)} rows, {n_routes} routes)")
-    print(f"[FlightTime]   Coverage: {n_routes} / {total_routes} total routes")
-    print("[FlightTime] --- SUCCESS ---")
+    roster_print(f"[FlightTime] Saved: {output_path} ({len(combined)} rows, {n_routes} routes)", config=config)
+    roster_print(f"[FlightTime] Coverage: {n_routes} / {total_routes} total routes", config=config)
+    roster_print("[FlightTime] --- SUCCESS ---", config=config)
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Hourly flight-time distribution builder")
     parser.add_argument("--schedule", type=str, required=True, help="Path to schedule CSV")
     parser.add_argument("--analysis-dir", type=str, required=True, help="Analysis output directory")
-    parser.add_argument("--output-dir", type=str, default=None, help="Final output directory (defaults to analysis-dir)")
+    parser.add_argument(
+        "--output-dir",
+        type=str,
+        default=None,
+        help="Final output directory (defaults to analysis-dir)",
+    )
     parser.add_argument("--suffix", type=str, default="", help="Suffix for output filenames")
     parser.add_argument("--seed", type=int, default=42, help="RNG seed")
+    add_output_arguments(parser)
     args = parser.parse_args()
 
+    output_mode = args.output_mode or DEFAULT_OUTPUT_MODE
     cfg = PipelineConfig(
         schedule_file=Path(args.schedule),
         analysis_dir=Path(args.analysis_dir),
         output_dir=Path(args.output_dir or args.analysis_dir),
         seed=args.seed,
         suffix=f"_{args.suffix}" if args.suffix else "",
+        output_mode=output_mode,
+        log_file=args.log_file,
     )
+    reset_log_file(config=cfg)
     analyze_flight_time_distribution(cfg)

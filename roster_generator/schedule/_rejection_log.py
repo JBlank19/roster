@@ -6,8 +6,8 @@ Usage from a tutorial script::
     log = stats.rejection_log
 
     # Human-readable reports
-    print(log.summary())
-    print(log.airport_summary("EGLL"))
+    roster_generator.roster_print(log.summary())
+    roster_generator.roster_print(log.airport_summary("EGLL"))
 
     # Programmatic access
     cap_by_airport = log.capacity_by_airport()   # {"EGLL": 91, "LFPG": 43, ...}

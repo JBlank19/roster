@@ -7,6 +7,8 @@ from typing import Dict, List, Optional, Tuple
 import numpy as np
 import pandas as pd
 
+from ..output import OutputConfig, roster_print
+
 # Shared constants
 BIN_SIZE_MINS = 5
 END_OF_DAY_MINS = 1440
@@ -27,6 +29,7 @@ class DataManager:
         turnaround_temporal_profile_path: Path,
         window_length_mins: int = END_OF_DAY_MINS,
         manipulation_fn: Optional[callable] = None,
+        output_config: OutputConfig | None = None,
     ):
         self.rng = rng
         self.routes_path = routes_path
@@ -37,27 +40,30 @@ class DataManager:
         self.window_length_mins = int(window_length_mins)
         self.hour_bins = max(1, self.window_length_mins // P_NEXT_BIN_SIZE_MINS)
         self._manipulation_fn = manipulation_fn or (lambda params, dtype: params)
+        self._output_config = output_config
 
         self.turnaround_lookup_stats: Dict[str, int] = defaultdict(int)
         self._load_all()
 
     def _load_all(self) -> None:
         """Orchestrate loading of all datasets."""
-        print("[Schedule] Loading data...")
-        print(f"[Schedule]   Routes: {self.routes_path}")
-        print(f"[Schedule]   Airports: {self.airports_path}")
-        print(f"[Schedule]   Window length mins: {self.window_length_mins}")
+        roster_print("[ScheduleDataManager] Loading data...", config=self._output_config)
+        roster_print(f"[ScheduleDataManager] Routes: {self.routes_path}", config=self._output_config)
+        roster_print(f"[ScheduleDataManager] Airports: {self.airports_path}", config=self._output_config)
+        roster_print(f"[ScheduleDataManager] Window length mins: {self.window_length_mins}", config=self._output_config)
 
         self._load_markov_data()
         self._load_turnaround_data()
         self._load_route_data()
         self._load_airport_data()
 
-        print(f"[Schedule]   Markov hourly states: {len(self.markov_hourly)}")
-        print(f"[Schedule]   Turnaround intraday keys: {len(self.turnaround_intraday_params)}")
-        print(f"[Schedule]   Turnaround temporal profile keys: {len(self.turnaround_temporal_profiles)}")
-        print(f"[Schedule]   Turnaround p_next (airline,wake) keys: {len(self.turnaround_temporal_next_prob)}")
-        print(f"[Schedule]   Routes: {len(self.routes)}")
+        temporal_count = len(self.turnaround_temporal_profiles)
+        p_next_count = len(self.turnaround_temporal_next_prob)
+        roster_print(f"[ScheduleDataManager] Markov hourly states: {len(self.markov_hourly)}", config=self._output_config)
+        roster_print(f"[ScheduleDataManager] Turnaround intraday keys: {len(self.turnaround_intraday_params)}", config=self._output_config)
+        roster_print(f"[ScheduleDataManager] Turnaround temporal profile keys: {temporal_count}", config=self._output_config)
+        roster_print(f"[ScheduleDataManager] Turnaround p_next (airline,wake) keys: {p_next_count}", config=self._output_config)
+        roster_print(f"[ScheduleDataManager] Routes: {len(self.routes)}", config=self._output_config)
 
     @staticmethod
     def _norm(value: object) -> str:
@@ -81,7 +87,7 @@ class DataManager:
         end_mask = arr_codes == "END"
         end_rows = int(end_mask.sum())
         if end_rows:
-            print(f"[Schedule]   Ignored {end_rows} Markov END transitions")
+            roster_print(f"[ScheduleDataManager] Ignored {end_rows} Markov END transitions", config=self._output_config)
             return markov_df[~end_mask].copy()
         return markov_df
 

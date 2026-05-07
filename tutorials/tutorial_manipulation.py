@@ -44,7 +44,14 @@ By default both callbacks are identities (no changes). To apply
 modifications, define your own functions and pass them to ``PipelineConfig``.
 
 Usage:
-    python tutorial_manipulation.py --seed 42 --suffix manip
+    python tutorials/tutorial_manipulation.py --seed 42 --suffix manip
+    python tutorials/tutorial_manipulation.py --seed 42 --suffix manip --output-mode file
+    python tutorials/tutorial_manipulation.py --output-mode non-verbose
+
+Status output can be routed with OUTPUT_MODE in tutorials/params.yaml or
+``--output-mode`` on the command line. ``terminal`` displays progress,
+``file`` writes to log/roster{suffix}.log unless LOG_FILE/``--log-file`` is
+set, and ``non-verbose`` suppresses routed progress messages.
 """
 
 import argparse
@@ -53,6 +60,11 @@ import sys
 from pathlib import Path
 
 import roster_generator
+from roster_generator.output import (
+    add_output_arguments,
+    reset_log_file,
+    roster_print,
+)
 from roster_generator.time_window import load_params_yaml, resolve_window_config
 
 
@@ -152,7 +164,7 @@ def my_markov_manipulation(
 
 
 # ------------------------------------------------------------------
-# Pipeline (same as tutorial_pipeline.py, but with both manipulation hooks)
+# Pipeline (same as tutorial_basic.py, but with both manipulation hooks)
 # ------------------------------------------------------------------
 
 def main() -> int:
@@ -167,19 +179,30 @@ def main() -> int:
         "--suffix", type=str, default="",
         help="Output file suffix, e.g. '0' -> schedule_0.csv (default: none)"
     )
+    add_output_arguments(parser)
     args = parser.parse_args()
 
     suffix = f"_{args.suffix}" if args.suffix else ""
     params_path = Path(__file__).with_name("params.yaml")
     raw_params = load_params_yaml(params_path)
     window_cfg = resolve_window_config(raw_params)
+    output_mode = args.output_mode or window_cfg.output_mode
+    log_file = args.log_file or window_cfg.log_file
+    log_file = reset_log_file(
+        output_mode=output_mode,
+        log_file=log_file,
+        suffix=suffix,
+    ) or log_file
 
-    print(
+    roster_print(
         "[Main] Window config: "
         f"REFTZ={window_cfg.reftz}, "
         f"WINDOW_START={window_cfg.window_start}, "
         f"WINDOW_LENGTH_HOURS={window_cfg.window_length_hours}, "
-        f"ACTUAL_TIMES={window_cfg.actual_times}"
+        f"ACTUAL_TIMES={window_cfg.actual_times}, "
+        f"OUTPUT_MODE={output_mode}",
+        output_mode=output_mode,
+        log_file=log_file,
     )
 
     # ------------------------------------------------------------------
@@ -187,10 +210,12 @@ def main() -> int:
     # ------------------------------------------------------------------
     input_file = "input/september2023.csv"
     if not os.path.exists(input_file):
-        print(f"[Main] {input_file} not found. Cleaning data...")
+        roster_print(f"[Main] {input_file} not found. Cleaning data...", output_mode=output_mode, log_file=log_file)
         roster_generator.clean_data(
             dirty_file="ECTL/Flights_20230901_20230930.csv",
             clean_file=input_file,
+            output_mode=output_mode,
+            log_file=log_file,
         )
 
     # ------------------------------------------------------------------
@@ -206,11 +231,13 @@ def main() -> int:
         window_start=window_cfg.window_start,
         window_length_hours=window_cfg.window_length_hours,
         actual_times=window_cfg.actual_times,
+        output_mode=output_mode,
+        log_file=log_file,
         manipulation_fn=my_manipulation,
         markov_manipulation_fn=my_markov_manipulation,
     )
 
-    print("[Main] Using custom manipulation_fn and markov_manipulation_fn")
+    roster_print("[Main] Using custom manipulation_fn and markov_manipulation_fn", config=config)
 
     # ------------------------------------------------------------------
     # Stages 1-4: Run the full pipeline
@@ -224,7 +251,7 @@ def main() -> int:
     roster_generator.generate_routes(config)
     roster_generator.generate_schedule(config)
 
-    print("[Main] Pipeline with manipulation completed successfully!")
+    roster_print("[Main] Pipeline with manipulation completed successfully!", config=config)
     return 0
 
 

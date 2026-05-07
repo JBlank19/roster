@@ -4,3 +4,11 @@ REFTZ: UTC
 WINDOW_START: "00:00"
 WINDOW_LENGTH_HOURS: 24
 ACTUAL_TIMES: false
+
+# Optional status-output routing.
+# OUTPUT_MODE values:
+#   terminal    -> show progress in the terminal (default)
+#   file        -> save progress to log/roster{suffix}.log unless LOG_FILE is set
+#   non-verbose -> suppress all routed progress messages
+OUTPUT_MODE: terminal
+# LOG_FILE: log/custom_roster.log

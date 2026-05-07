@@ -4,6 +4,13 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable, Literal, Mapping
 
+from .output import (
+    DEFAULT_OUTPUT_MODE,
+    OutputMode,
+    resolve_log_file,
+    validate_log_file,
+    validate_output_mode,
+)
 from .time_window import (
     DEFAULT_ACTUAL_TIMES,
     DEFAULT_REFTZ,
@@ -76,6 +83,10 @@ class PipelineConfig:
         Window length in hours (1..24).
     actual_times : bool
         Whether actual timestamp columns are required and used.
+    output_mode : {"terminal", "file", "non-verbose"}
+        Where ROSTER status messages are routed.
+    log_file : Path | None
+        Optional explicit log path used when output_mode is ``"file"``.
     """
 
     schedule_file: Path
@@ -87,6 +98,8 @@ class PipelineConfig:
     window_start: str = DEFAULT_WINDOW_START
     window_length_hours: int = DEFAULT_WINDOW_LENGTH_HOURS
     actual_times: bool = DEFAULT_ACTUAL_TIMES
+    output_mode: OutputMode = DEFAULT_OUTPUT_MODE
+    log_file: Path | None = None
     manipulation_fn: ManipulationFn = field(default=_default_manipulation, repr=False)
     markov_manipulation_fn: MarkovManipulationFn = field(
         default=_default_markov_manipulation,
@@ -104,6 +117,8 @@ class PipelineConfig:
         self.window_start = validate_window_start(self.window_start)
         self.window_length_hours = validate_window_length_hours(self.window_length_hours)
         self.actual_times = validate_actual_times(self.actual_times)
+        self.output_mode = validate_output_mode(self.output_mode)
+        self.log_file = validate_log_file(self.log_file)
         self.window_start_mins = window_start_to_minutes(self.window_start)
         self.window_length_mins = int(self.window_length_hours) * 60
 
@@ -116,3 +131,7 @@ class PipelineConfig:
     def output_path(self, name: str) -> Path:
         """Return ``output_dir / <name><suffix>.csv``."""
         return self.output_dir / f"{name}{self.suffix}.csv"
+
+    def resolved_log_file(self) -> Path:
+        """Return the log path used when ``output_mode='file'``."""
+        return resolve_log_file(config=self)

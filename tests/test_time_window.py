@@ -1,5 +1,7 @@
 """Tests for REFTZ window utilities."""
 
+from pathlib import Path
+
 import pandas as pd
 import pytest
 
@@ -26,6 +28,8 @@ class TestParamsYaml:
                     'WINDOW_START: "06:00"',
                     "WINDOW_LENGTH_HOURS: 18",
                     "ACTUAL_TIMES: true",
+                    "OUTPUT_MODE: file",
+                    "LOG_FILE: log/tutorial.log",
                 ]
             ),
             encoding="utf-8",
@@ -35,6 +39,8 @@ class TestParamsYaml:
         assert params["WINDOW_START"] == "06:00"
         assert params["WINDOW_LENGTH_HOURS"] == 18
         assert params["ACTUAL_TIMES"] == "true"
+        assert params["OUTPUT_MODE"] == "file"
+        assert params["LOG_FILE"] == "log/tutorial.log"
 
     def test_resolve_defaults(self):
         cfg = resolve_window_config({})
@@ -42,6 +48,8 @@ class TestParamsYaml:
         assert cfg.window_start == "00:00"
         assert cfg.window_length_hours == 24
         assert cfg.actual_times is False
+        assert cfg.output_mode == "terminal"
+        assert cfg.log_file is None
         assert cfg.window_start_mins == 0
         assert cfg.window_length_mins == 1440
 
@@ -51,12 +59,22 @@ class TestParamsYaml:
         assert cfg.window_start == "00:00"
         assert cfg.window_length_hours == 24
         assert cfg.actual_times is False
+        assert cfg.output_mode == "terminal"
 
     def test_actual_times_accepts_bool_like_values(self):
         assert resolve_window_config({"ACTUAL_TIMES": "true"}).actual_times is True
         assert resolve_window_config({"ACTUAL_TIMES": "false"}).actual_times is False
         assert resolve_window_config({"ACTUAL_TIMES": 1}).actual_times is True
         assert resolve_window_config({"ACTUAL_TIMES": 0}).actual_times is False
+
+    def test_output_config_values(self):
+        cfg = resolve_window_config({
+            "OUTPUT_MODE": "file",
+            "LOG_FILE": "log/tutorial.log",
+        })
+
+        assert cfg.output_mode == "file"
+        assert cfg.log_file == Path("log/tutorial.log")
 
     def test_unknown_keys_raise(self):
         with pytest.raises(ValueError, match="Unknown keys"):
@@ -71,6 +89,8 @@ class TestParamsYaml:
             resolve_window_config({"WINDOW_LENGTH_HOURS": 0})
         with pytest.raises(ValueError, match="ACTUAL_TIMES"):
             resolve_window_config({"ACTUAL_TIMES": "maybe"})
+        with pytest.raises(ValueError, match="Invalid output mode"):
+            resolve_window_config({"OUTPUT_MODE": "chatty"})
 
 
 class TestShiftedDayUtilities:

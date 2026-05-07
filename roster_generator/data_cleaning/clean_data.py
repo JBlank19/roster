@@ -8,6 +8,14 @@ from pathlib import Path
 import pandas as pd
 import airportsdata
 
+from roster_generator.output import (
+    DEFAULT_OUTPUT_MODE,
+    OutputMode,
+    add_output_arguments,
+    reset_log_file,
+    roster_print,
+)
+
 REQUIRED_SOURCE_COLUMNS = [
     "ADEP",
     "ADES",
@@ -33,7 +41,14 @@ FINAL_COLUMNS = [
 ]
 
 
-def calculate_local_time(df: pd.DataFrame, utc_col: str, tz_col: str) -> pd.Series:
+def calculate_local_time(
+    df: pd.DataFrame,
+    utc_col: str,
+    tz_col: str,
+    *,
+    output_mode: OutputMode | str | None = None,
+    log_file: str | Path | None = None,
+) -> pd.Series:
     """
     Convert a UTC column to local time based on a timezone column.
 
@@ -67,7 +82,7 @@ def calculate_local_time(df: pd.DataFrame, utc_col: str, tz_col: str) -> pd.Seri
             converted = converted.dt.tz_localize(None)
             local_series.loc[group.index] = converted
         except Exception as e:
-            print(f"[Clean Data] Error converting timezone {tz_name}: {e}")
+            roster_print(f"[CleanData] Error converting timezone {tz_name}: {e}", output_mode=output_mode, log_file=log_file)
 
     return local_series
 
@@ -99,7 +114,13 @@ def _load_wake_map() -> dict[str, str | None]:
     return wake_map
 
 
-def clean(dirty_file: str | Path, clean_file: str | Path) -> None:
+def clean(
+    dirty_file: str | Path,
+    clean_file: str | Path,
+    *,
+    output_mode: OutputMode | str | None = None,
+    log_file: str | Path | None = None,
+) -> None:
     """
     Clean EUROCONTROL flight data and save the result.
 
@@ -118,16 +139,16 @@ def clean(dirty_file: str | Path, clean_file: str | Path) -> None:
     output_file = Path(clean_file)
 
     # 1. Setup and Loading
-    print("[Clean Data] Loading airport database...")
+    roster_print("[CleanData] Loading airport database...", output_mode=output_mode, log_file=log_file)
     airports = airportsdata.load('ICAO')
 
-    print(f"[Clean Data] Loading flight data from {input_file}...")
+    roster_print(f"[CleanData] Loading flight data from {input_file}...", output_mode=output_mode, log_file=log_file)
     df = pd.read_csv(input_file)
 
     # 2. Validate source schema
     missing_cols = [col for col in REQUIRED_SOURCE_COLUMNS if col not in df.columns]
     if missing_cols:
-        raise ValueError(f"[Clean Data] Missing required source columns: {missing_cols}")
+        raise ValueError(f"[CleanData] Missing required source columns: {missing_cols}")
 
     df_clean = df[REQUIRED_SOURCE_COLUMNS].copy()
 
@@ -140,7 +161,7 @@ def clean(dirty_file: str | Path, clean_file: str | Path) -> None:
         "ACTUAL ARRIVAL TIME",
     ]
 
-    print("[Clean Data] Processing UTC timestamps...")
+    roster_print("[CleanData] Processing UTC timestamps...", output_mode=output_mode, log_file=log_file)
     for col in time_cols:
         df_clean[col] = pd.to_datetime(df_clean[col], dayfirst=True, errors="coerce")
         if df_clean[col].dt.tz is None:
@@ -149,7 +170,7 @@ def clean(dirty_file: str | Path, clean_file: str | Path) -> None:
             df_clean[col] = df_clean[col].dt.tz_convert("UTC")
 
     # B. Validate Airports
-    print("[Clean Data] Validating airports against airportsdata library...")
+    roster_print("[CleanData] Validating airports against airportsdata library...", output_mode=output_mode, log_file=log_file)
     initial_count = len(df_clean)
     valid_icaos = set(airports.keys())
 
@@ -158,13 +179,19 @@ def clean(dirty_file: str | Path, clean_file: str | Path) -> None:
         df_clean['ADES'].isin(valid_icaos)
     ]
 
-    print(f"[Clean Data] Dropped {initial_count - len(df_clean)} rows with invalid or unknown airport codes.")
+    dropped_invalid_airports = initial_count - len(df_clean)
+    roster_print(
+        f"[CleanData] Dropped {dropped_invalid_airports} rows "
+        "with invalid or unknown airport codes.",
+        output_mode=output_mode,
+        log_file=log_file,
+    )
 
     # C. Clean Aircraft Registration
     df_clean = df_clean.dropna(subset=["AC Registration"])
 
     # 4. Rename Columns
-    print("[Clean Data] Renaming columns...")
+    roster_print("[CleanData] Renaming columns...", output_mode=output_mode, log_file=log_file)
     rename_map = {
         "ADEP": "DEP_ICAO",
         "ADES": "ARR_ICAO",
@@ -179,7 +206,7 @@ def clean(dirty_file: str | Path, clean_file: str | Path) -> None:
     df_clean = df_clean.rename(columns=rename_map)
 
     # Add AC_WAKE (ICAO Wake Turbulence Category)
-    print("[Clean Data] Adding AC_WAKE from aircraft-list (ICAO Doc 8643)...")
+    roster_print("[CleanData] Adding AC_WAKE from aircraft-list (ICAO Doc 8643)...", output_mode=output_mode, log_file=log_file)
 
     if "AC_TYPE" in df_clean.columns:
         df_clean["AC_TYPE"] = df_clean["AC_TYPE"].astype(str).str.strip().str.upper()
@@ -196,36 +223,39 @@ def clean(dirty_file: str | Path, clean_file: str | Path) -> None:
             df_clean = df_clean[df_clean["AC_WAKE"].astype(str).str.strip() != ""]
             dropped_wake = initial_count_before_wake - len(df_clean)
             if dropped_wake > 0:
-                print(f"[Clean Data] Dropped {dropped_wake} rows with missing or empty AC_WAKE.")
+                roster_print(f"[CleanData] Dropped {dropped_wake} rows with missing or empty AC_WAKE.", output_mode=output_mode, log_file=log_file)
 
-            print("[Clean Data] AC_WAKE added.")
+            roster_print("[CleanData] AC_WAKE added.", output_mode=output_mode, log_file=log_file)
         except ImportError as exc:
             raise ImportError(
-                "[Clean Data] aircraft-list not installed. Run: pip install aircraft-list"
+                "[CleanData] aircraft-list not installed. Run: pip install aircraft-list"
             ) from exc
     else:
-        raise ValueError("[Clean Data] Column AC_TYPE not present in cleaned data.")
+        raise ValueError("[CleanData] Column AC_TYPE not present in cleaned data.")
 
     # 5. Enforce strict output schema (exact columns and order)
     missing_final = [col for col in FINAL_COLUMNS if col not in df_clean.columns]
     if missing_final:
-        raise ValueError(f"[Clean Data] Missing required output columns: {missing_final}")
+        raise ValueError(f"[CleanData] Missing required output columns: {missing_final}")
     df_clean = df_clean[FINAL_COLUMNS].copy()
 
     # 6. Export
-    print(f"[Clean Data] Saving cleaned data to {output_file}...")
+    roster_print(f"[CleanData] Saving cleaned data to {output_file}...", output_mode=output_mode, log_file=log_file)
     output_file.parent.mkdir(parents=True, exist_ok=True)
     df_clean.to_csv(output_file, index=False, date_format='%Y-%m-%d %H:%M:%S')
 
-    print("[Clean Data] Done.")
-    print(f"[Clean Data] Final dataset contains {len(df_clean)} flights.")
+    roster_print("[CleanData] Done.", output_mode=output_mode, log_file=log_file)
+    roster_print(f"[CleanData] Final dataset contains {len(df_clean)} flights.", output_mode=output_mode, log_file=log_file)
 
 
 def main():
     parser = argparse.ArgumentParser(description="Clean EUROCONTROL flight data.")
     parser.add_argument("--yyyymm", required=True,
                         help="Year-month in YYYYMM format, e.g. 202309")
+    add_output_arguments(parser)
     args = parser.parse_args()
+    output_mode = args.output_mode or DEFAULT_OUTPUT_MODE
+    log_file = reset_log_file(output_mode=output_mode, log_file=args.log_file) or args.log_file
 
     year = int(args.yyyymm[:4])
     month = int(args.yyyymm[4:6])
@@ -239,7 +269,12 @@ def main():
     INPUT_FILE = cwd / "data" / f"Flights_{start}_{end}.csv"
     OUTPUT_FILE = cwd / "computed" / "clean_data" / f"{month_name}{year}.csv"
 
-    clean(dirty_file=INPUT_FILE, clean_file=OUTPUT_FILE)
+    clean(
+        dirty_file=INPUT_FILE,
+        clean_file=OUTPUT_FILE,
+        output_mode=output_mode,
+        log_file=log_file,
+    )
 
 
 if __name__ == "__main__":

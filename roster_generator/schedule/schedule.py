@@ -7,6 +7,13 @@ import numpy as np
 import pandas as pd
 
 from ..config import PipelineConfig
+from ..output import (
+    DEFAULT_OUTPUT_MODE,
+    OutputConfig,
+    add_output_arguments,
+    reset_log_file,
+    roster_print,
+)
 from ._schedule_capacity import CapacityTracker
 from ._schedule_data_manager import DataManager
 from ._schedule_generator import ScheduleGenerator
@@ -98,7 +105,10 @@ def _build_prior_flight(row) -> Flight | None:
     )
 
 
-def _summarize_initial_conditions(aircraft_list: List[Aircraft]) -> None:
+def _summarize_initial_conditions(
+    aircraft_list: List[Aircraft],
+    output_config: OutputConfig | None = None,
+) -> None:
     """Print a compact summary of loaded initial conditions."""
     single_flight_count = sum(1 for ac in aircraft_list if ac.is_single_flight)
     single_flight_with_prior = sum(
@@ -106,10 +116,10 @@ def _summarize_initial_conditions(aircraft_list: List[Aircraft]) -> None:
     )
     prior_only_count = sum(1 for ac in aircraft_list if ac.is_prior_only)
 
-    print(f"[Schedule]   Loaded {len(aircraft_list)} aircraft with initial conditions")
-    print(f"[Schedule]   Single-flight aircraft (will passthrough): {single_flight_count}")
-    print(f"[Schedule]     With overnight arrival: {single_flight_with_prior}")
-    print(f"[Schedule]   Prior-only aircraft (arrival passthrough): {prior_only_count}")
+    roster_print(f"[Schedule] Loaded {len(aircraft_list)} aircraft with initial conditions", config=output_config)
+    roster_print(f"[Schedule] Single-flight aircraft (will passthrough): {single_flight_count}", config=output_config)
+    roster_print(f"[Schedule] With overnight arrival: {single_flight_with_prior}", config=output_config)
+    roster_print(f"[Schedule] Prior-only aircraft (arrival passthrough): {prior_only_count}", config=output_config)
 
 
 def _seed_and_collect_needs_greedy(
@@ -156,9 +166,12 @@ def _save_schedule(df: pd.DataFrame, output_path: Path, output_dir: Path) -> Non
         df.to_csv(output_path, index=False)
 
 
-def load_initial_conditions(initial_conditions_path: Path) -> List[Aircraft]:
+def load_initial_conditions(
+    initial_conditions_path: Path,
+    output_config: OutputConfig | None = None,
+) -> List[Aircraft]:
     """Load initial conditions and create aircraft objects."""
-    print("[Schedule] Loading initial conditions...")
+    roster_print("[Schedule] Loading initial conditions...", config=output_config)
     ic_df = pd.read_csv(initial_conditions_path)
     aircraft_list: List[Aircraft] = []
 
@@ -175,7 +188,7 @@ def load_initial_conditions(initial_conditions_path: Path) -> List[Aircraft]:
         )
         aircraft_list.append(aircraft)
 
-    _summarize_initial_conditions(aircraft_list)
+    _summarize_initial_conditions(aircraft_list, output_config=output_config)
     return aircraft_list
 
 
@@ -184,26 +197,23 @@ def run_generation(
     generator: ScheduleGenerator,
     tracker: CapacityTracker,
     stats: GenerationStats,
+    output_config: OutputConfig | None = None,
 ) -> None:
     """Run schedule generation for all aircraft."""
-    print("[Schedule] Seeding initial flights...")
+    roster_print("[Schedule] Seeding initial flights...", config=output_config)
     needs_greedy = _seed_and_collect_needs_greedy(aircraft_list, generator)
 
     initial_flights = sum(len(ac.chain) for ac in aircraft_list)
-    print(
-        f"[Schedule]   Seeded {initial_flights} initial flights"
-    )
+    roster_print(f"[Schedule] Seeded {initial_flights} initial flights", config=output_config)
 
-    print(f"[Schedule] Generating greedy chains for {len(needs_greedy)} aircraft...")
+    roster_print(f"[Schedule] Generating greedy chains for {len(needs_greedy)} aircraft...", config=output_config)
     for index, aircraft in enumerate(needs_greedy, start=1):
         generator.generate_greedy_chain(aircraft)
         stats.successful_chains += 1
         stats.total_flights = sum(len(a.chain) for a in aircraft_list)
 
         if index % 1000 == 0:
-            print(
-                f"[Schedule]   {index}/{len(needs_greedy)} | Flights: {stats.total_flights}"
-            )
+            roster_print(f"[Schedule] {index}/{len(needs_greedy)} | Flights: {stats.total_flights}", config=output_config)
 
     greedy_ids = {id(ac) for ac in needs_greedy}
     for aircraft in aircraft_list:
@@ -230,20 +240,23 @@ def generate_schedule(config: PipelineConfig) -> GenerationStats:
     paths = _resolve_schedule_paths(config)
     rng = _build_runtime(seed)
 
-    print("[Schedule] --- SCHEDULE GENERATOR (Greedy Construction) ---")
-    print(f"[Schedule] Seed={seed}, Suffix='{suffix}'")
-    print(
+    roster_print("[Schedule] --- SCHEDULE GENERATOR (Greedy Construction) ---", config=config)
+    roster_print(f"[Schedule] Seed={seed}, Suffix='{suffix}'", config=config)
+    roster_print(
         f"[Schedule] Window: REFTZ={config.reftz}, "
-        f"START={config.window_start}, LENGTH_H={config.window_length_hours}"
+        f"START={config.window_start}, LENGTH_H={config.window_length_hours}",
+        config=config,
     )
-    print(f"[Schedule] Output: {paths['output']}")
-    print(
+    roster_print(f"[Schedule] Output: {paths['output']}", config=config)
+    roster_print(
         f"[Schedule] Inputs: IC={paths['initial_conditions']}, Routes={paths['routes']}, "
-        f"Airports={paths['airports']}"
+        f"Airports={paths['airports']}",
+        config=config,
     )
-    print(
+    roster_print(
         f"[Schedule] Turnaround params: {paths['turnaround_intraday']}, "
-        f"{paths['turnaround_temporal']}"
+        f"{paths['turnaround_temporal']}",
+        config=config,
     )
 
     _validate_required_inputs(paths)
@@ -257,9 +270,10 @@ def generate_schedule(config: PipelineConfig) -> GenerationStats:
         paths["turnaround_temporal"],
         window_length_mins=config.window_length_mins,
         manipulation_fn=config.manipulation_fn,
+        output_config=config,
     )
 
-    aircraft_list = load_initial_conditions(paths["initial_conditions"])
+    aircraft_list = load_initial_conditions(paths["initial_conditions"], output_config=config)
     rng.shuffle(aircraft_list)
 
     tracker = CapacityTracker(
@@ -270,19 +284,19 @@ def generate_schedule(config: PipelineConfig) -> GenerationStats:
     stats = GenerationStats(total_aircraft=len(aircraft_list))
     generator = ScheduleGenerator(data, tracker, stats, rng)
 
-    run_generation(aircraft_list, generator, tracker, stats)
+    run_generation(aircraft_list, generator, tracker, stats, output_config=config)
 
-    print("[Schedule] Saving schedule...")
+    roster_print("[Schedule] Saving schedule...", config=config)
     df = format_results(aircraft_list)
     _save_schedule(df, paths["output"], config.output_dir)
 
-    print(stats.summary())
+    roster_print(stats.summary(), config=config)
     if data.turnaround_lookup_stats:
         ordered_keys = sorted(data.turnaround_lookup_stats.keys())
         parts = [f"{k}={int(data.turnaround_lookup_stats[k])}" for k in ordered_keys]
-        print("[Schedule] Turnaround lookup diagnostics: " + ", ".join(parts))
-    print(f"[Schedule] Saved: {paths['output']} ({len(df)} flights)")
-    print("[Schedule] --- SUCCESS ---")
+        roster_print("[Schedule] Turnaround lookup diagnostics: " + ", ".join(parts), config=config)
+    roster_print(f"[Schedule] Saved: {paths['output']} ({len(df)} flights)", config=config)
+    roster_print("[Schedule] --- SUCCESS ---", config=config)
     return stats
 
 
@@ -293,13 +307,18 @@ if __name__ == "__main__":
     parser.add_argument("--output-dir", type=str, required=True, help="Final output directory")
     parser.add_argument("--suffix", type=str, default="", help="Suffix for output filenames")
     parser.add_argument("--seed", type=int, default=42, help="Random seed (default: 42)")
+    add_output_arguments(parser)
     args = parser.parse_args()
 
+    output_mode = args.output_mode or DEFAULT_OUTPUT_MODE
     cfg = PipelineConfig(
         schedule_file=Path(args.schedule),
         analysis_dir=Path(args.analysis_dir),
         output_dir=Path(args.output_dir),
         seed=args.seed,
         suffix=f"_{args.suffix}" if args.suffix else "",
+        output_mode=output_mode,
+        log_file=args.log_file,
     )
+    reset_log_file(config=cfg)
     generate_schedule(cfg)

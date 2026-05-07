@@ -24,6 +24,13 @@ import numpy as np
 import pandas as pd
 
 from roster_generator.config import PipelineConfig
+from roster_generator.output import (
+    DEFAULT_OUTPUT_MODE,
+    OutputConfig,
+    add_output_arguments,
+    reset_log_file,
+    roster_print,
+)
 from roster_generator.time_window import (
     DEFAULT_REFTZ,
     DEFAULT_WINDOW_LENGTH_HOURS,
@@ -51,6 +58,7 @@ def _compute_capacities(
     reftz: str = DEFAULT_REFTZ,
     window_start_mins: int = 0,
     window_length_mins: int = DEFAULT_WINDOW_LENGTH_HOURS * 60,
+    output_config: OutputConfig | None = None,
 ) -> pd.DataFrame:
     """Compute maximum rolling 60-minute and 5-minute movement capacities.
 
@@ -72,7 +80,7 @@ def _compute_capacities(
         Airports with no observed traffic receive a floor value of 1 for
         both columns.
     """
-    print("[Airports] Computing capacities (max rolling 60 min & 5 min)...")
+    roster_print("[Airports] Computing capacities (max rolling 60 min & 5 min)...", config=output_config)
 
     # Merge departures and arrivals into one movement stream
     deps = schedule_df[[DEP_COL, STD_COL]].dropna().copy()
@@ -144,10 +152,11 @@ def _compute_capacities(
     result["burst_capacity"] = result["burst_capacity"].fillna(1).astype(int).clip(lower=1)
 
     top5 = result.nlargest(5, "rolling_capacity")
-    print(
-        f"[Airports]   Computed capacities for {len(result)} airports. "
+    roster_print(
+        f"[Airports] Computed capacities for {len(result)} airports. "
         f"Top 5 by rolling cap: "
-        f"{top5[['airport_id', 'rolling_capacity', 'burst_capacity']].values.tolist()}"
+        f"{top5[['airport_id', 'rolling_capacity', 'burst_capacity']].values.tolist()}",
+        config=output_config,
     )
 
     return result
@@ -183,7 +192,7 @@ def generate_airports(config: PipelineConfig) -> None:
     FileNotFoundError
         If the Markov analysis file does not exist.
     """
-    print("[Airports] --- AIRPORT CATALOGUE ---")
+    roster_print("[Airports] --- AIRPORT CATALOGUE ---", config=config)
 
     markov_path = config.analysis_path("markov")
     output_path = config.output_path("airports")
@@ -192,20 +201,20 @@ def generate_airports(config: PipelineConfig) -> None:
         raise FileNotFoundError(f"[Airports] Markov file not found: {markov_path}")
 
     # 1. Extract unique airports from the Markov table
-    print(f"[Airports] Markov file: {markov_path}")
+    roster_print(f"[Airports] Markov file: {markov_path}", config=config)
     markov_df = pd.read_csv(markov_path)
 
     dep_airports = set(markov_df[DEP_COL].dropna().unique())
     arr_airports = set(markov_df[ARR_COL].dropna().unique())
     all_airports = sorted(dep_airports | arr_airports)
 
-    print(f"[Airports]   {len(all_airports)} unique airports found in Markov table")
+    roster_print(f"[Airports] {len(all_airports)} unique airports found in Markov table", config=config)
 
     airports_df = pd.DataFrame({"airport_id": all_airports})
 
     # 2. Enrich with curfews and capacities from the schedule
     if config.schedule_file.exists():
-        print(f"[Airports] Schedule: {config.schedule_file}")
+        roster_print(f"[Airports] Schedule: {config.schedule_file}", config=config)
         schedule_df = pd.read_csv(config.schedule_file)
         _require_columns(schedule_df, [DEP_COL, ARR_COL, STD_COL, STA_COL], "schedule")
 
@@ -216,6 +225,7 @@ def generate_airports(config: PipelineConfig) -> None:
             reftz=config.reftz,
             window_start_mins=config.window_start_mins,
             window_length_mins=config.window_length_mins,
+            output_config=config,
         )
         airports_df = airports_df.merge(capacity_df, on="airport_id", how="left")
         airports_df["rolling_capacity"] = (
@@ -225,10 +235,7 @@ def generate_airports(config: PipelineConfig) -> None:
             airports_df["burst_capacity"].fillna(1).astype(int).clip(lower=1)
         )
     else:
-        print(
-            f"[Airports] Warning: schedule file not found ({config.schedule_file}). "
-            "Skipping capacity computation."
-        )
+        roster_print(f"[Airports] Warning: schedule file not found ({config.schedule_file}). " "Skipping capacity computation.", config=config)
         airports_df["rolling_capacity"] = 1
         airports_df["burst_capacity"] = 1
 
@@ -236,8 +243,8 @@ def generate_airports(config: PipelineConfig) -> None:
     config.output_dir.mkdir(parents=True, exist_ok=True)
     airports_df.to_csv(output_path, index=False)
 
-    print(f"[Airports] Saved: {output_path} ({len(airports_df)} airports)")
-    print("[Airports] --- SUCCESS ---")
+    roster_print(f"[Airports] Saved: {output_path} ({len(airports_df)} airports)", config=config)
+    roster_print("[Airports] --- SUCCESS ---", config=config)
 
 
 if __name__ == "__main__":
@@ -247,13 +254,18 @@ if __name__ == "__main__":
     parser.add_argument("--output-dir", type=str, required=True, help="Final output directory")
     parser.add_argument("--suffix", type=str, default="", help="Suffix for output filenames")
     parser.add_argument("--seed", type=int, default=42, help="RNG seed")
+    add_output_arguments(parser)
     args = parser.parse_args()
 
+    output_mode = args.output_mode or DEFAULT_OUTPUT_MODE
     cfg = PipelineConfig(
         schedule_file=Path(args.schedule),
         analysis_dir=Path(args.analysis_dir),
         output_dir=Path(args.output_dir),
         seed=args.seed,
         suffix=f"_{args.suffix}" if args.suffix else "",
+        output_mode=output_mode,
+        log_file=args.log_file,
     )
+    reset_log_file(config=cfg)
     generate_airports(cfg)
