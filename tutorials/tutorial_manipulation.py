@@ -52,6 +52,10 @@ Status output can be routed with OUTPUT_MODE in tutorials/params.yaml or
 ``--output-mode`` on the command line. ``terminal`` displays progress,
 ``file`` writes to log/roster{suffix}.log unless LOG_FILE/``--log-file`` is
 set, and ``non-verbose`` suppresses routed progress messages.
+
+Set ``SAVE_COMPUTED: false`` in tutorials/params.yaml or pass
+``--no-save-computed`` to delete intermediate computed files (markov tables,
+turnaround params, flight-time params) after the pipeline completes.
 """
 
 import argparse
@@ -179,6 +183,14 @@ def main() -> int:
         "--suffix", type=str, default="",
         help="Output file suffix, e.g. '0' -> schedule_0.csv (default: none)"
     )
+    parser.add_argument(
+        "--no-save-computed", action="store_true", default=False,
+        help=(
+            "Delete intermediate computed files (markov tables, turnaround params, "
+            "flight-time params) after the pipeline completes. "
+            "Equivalent to SAVE_COMPUTED: false in params.yaml."
+        )
+    )
     add_output_arguments(parser)
     args = parser.parse_args()
 
@@ -186,6 +198,7 @@ def main() -> int:
     params_path = Path(__file__).with_name("params.yaml")
     raw_params = load_params_yaml(params_path)
     window_cfg = resolve_window_config(raw_params)
+    save_computed = not args.no_save_computed and window_cfg.save_computed
     output_mode = args.output_mode or window_cfg.output_mode
     log_file = args.log_file or window_cfg.log_file
     log_file = reset_log_file(
@@ -233,6 +246,7 @@ def main() -> int:
         actual_times=window_cfg.actual_times,
         output_mode=output_mode,
         log_file=log_file,
+        save_computed=save_computed,
         manipulation_fn=my_manipulation,
         markov_manipulation_fn=my_markov_manipulation,
     )
@@ -252,6 +266,11 @@ def main() -> int:
     roster_generator.generate_schedule(config)
 
     roster_print("[Main] Pipeline with manipulation completed successfully!", config=config)
+
+    if not config.save_computed:
+        config.cleanup_analysis()
+        roster_print("[Main] Computed analysis files deleted (save_computed=False).", config=config)
+
     return 0
 
 

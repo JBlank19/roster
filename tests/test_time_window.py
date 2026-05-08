@@ -38,7 +38,7 @@ class TestParamsYaml:
         assert params["REFTZ"] == "Europe/Madrid"
         assert params["WINDOW_START"] == "06:00"
         assert params["WINDOW_LENGTH_HOURS"] == 18
-        assert params["ACTUAL_TIMES"] == "true"
+        assert params["ACTUAL_TIMES"] is True
         assert params["OUTPUT_MODE"] == "file"
         assert params["LOG_FILE"] == "log/tutorial.log"
 

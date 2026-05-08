@@ -12,3 +12,9 @@ ACTUAL_TIMES: false
 #   non-verbose -> suppress all routed progress messages
 OUTPUT_MODE: terminal
 # LOG_FILE: log/custom_roster.log
+
+# Whether to keep intermediate computed files (markov tables, turnaround params,
+# flight-time params) after the pipeline finishes.
+# Set to false to delete them automatically — useful for repeated runs or sweeps
+# where disk space matters.
+SAVE_COMPUTED: true

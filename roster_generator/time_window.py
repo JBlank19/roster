@@ -16,6 +16,7 @@ DEFAULT_REFTZ = "UTC"
 DEFAULT_WINDOW_START = "00:00"
 DEFAULT_WINDOW_LENGTH_HOURS = 24
 DEFAULT_ACTUAL_TIMES = False
+DEFAULT_SAVE_COMPUTED = True
 
 PARAM_KEY_REFTZ = "REFTZ"
 PARAM_KEY_WINDOW_START = "WINDOW_START"
@@ -23,6 +24,7 @@ PARAM_KEY_WINDOW_LENGTH_HOURS = "WINDOW_LENGTH_HOURS"
 PARAM_KEY_ACTUAL_TIMES = "ACTUAL_TIMES"
 PARAM_KEY_OUTPUT_MODE = "OUTPUT_MODE"
 PARAM_KEY_LOG_FILE = "LOG_FILE"
+PARAM_KEY_SAVE_COMPUTED = "SAVE_COMPUTED"
 ALLOWED_PARAM_KEYS = {
     PARAM_KEY_REFTZ,
     PARAM_KEY_WINDOW_START,
@@ -30,6 +32,7 @@ ALLOWED_PARAM_KEYS = {
     PARAM_KEY_ACTUAL_TIMES,
     PARAM_KEY_OUTPUT_MODE,
     PARAM_KEY_LOG_FILE,
+    PARAM_KEY_SAVE_COMPUTED,
 }
 
 WINDOW_START_PATTERN = re.compile(r"^(?:[01]\d|2[0-3]):[0-5]\d$")
@@ -127,6 +130,7 @@ class WindowConfig:
     actual_times: bool = DEFAULT_ACTUAL_TIMES
     output_mode: OutputMode = DEFAULT_OUTPUT_MODE
     log_file: Path | None = None
+    save_computed: bool = DEFAULT_SAVE_COMPUTED
 
     @property
     def window_start_mins(self) -> int:
@@ -145,6 +149,10 @@ def _parse_scalar(raw: str) -> Any:
         text.startswith("'") and text.endswith("'")
     ):
         return text[1:-1]
+    if text.lower() == "true":
+        return True
+    if text.lower() == "false":
+        return False
     if text.isdigit():
         return int(text)
     return text
@@ -195,6 +203,7 @@ def resolve_window_config(raw_params: dict[str, Any]) -> WindowConfig:
         raw_params.get(PARAM_KEY_OUTPUT_MODE, DEFAULT_OUTPUT_MODE)
     )
     log_file = validate_log_file(raw_params.get(PARAM_KEY_LOG_FILE))
+    save_computed = bool(raw_params.get(PARAM_KEY_SAVE_COMPUTED, DEFAULT_SAVE_COMPUTED))
     return WindowConfig(
         reftz=reftz,
         window_start=window_start,
@@ -202,4 +211,5 @@ def resolve_window_config(raw_params: dict[str, Any]) -> WindowConfig:
         actual_times=actual_times,
         output_mode=output_mode,
         log_file=log_file,
+        save_computed=save_computed,
     )

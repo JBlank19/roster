@@ -37,6 +37,12 @@ Status output can be routed with:
 
 File mode writes to log/roster{suffix}.log unless LOG_FILE or --log-file is set.
 Command-line output options override tutorials/params.yaml.
+
+Computed file retention:
+  - SAVE_COMPUTED (true/false; default: true) keeps or deletes the intermediate
+    analysis files (markov tables, turnaround params, etc.) in computed/ after
+    the pipeline finishes.  Use --no-save-computed on the command line or set
+    SAVE_COMPUTED: false in tutorials/params.yaml to free disk space automatically.
 """
 
 import argparse
@@ -76,6 +82,14 @@ def main() -> int:
             "--schedule-file input/bts_clean.csv."
         )
     )
+    parser.add_argument(
+        "--no-save-computed", action="store_true", default=False,
+        help=(
+            "Delete intermediate computed files (markov tables, turnaround params, "
+            "flight-time params) after the pipeline completes. "
+            "Equivalent to SAVE_COMPUTED: false in params.yaml."
+        )
+    )
     add_output_arguments(parser)
     args = parser.parse_args()
 
@@ -83,6 +97,7 @@ def main() -> int:
     params_path = Path(__file__).with_name("params.yaml")
     raw_params = load_params_yaml(params_path)
     window_cfg = resolve_window_config(raw_params)
+    save_computed = not args.no_save_computed and window_cfg.save_computed
     output_mode = args.output_mode or window_cfg.output_mode
     log_file = args.log_file or window_cfg.log_file
     log_file = reset_log_file(
@@ -147,6 +162,7 @@ def main() -> int:
         actual_times=window_cfg.actual_times,
         output_mode=output_mode,
         log_file=log_file,
+        save_computed=save_computed,
     )
     roster_print("[Main] Setting up config done.", config=config)
 
@@ -195,6 +211,11 @@ def main() -> int:
     roster_print("[Main] Generating schedule done.", config=config)
 
     roster_print("[Main] Pipeline completed successfully!", config=config)
+
+    if not config.save_computed:
+        config.cleanup_analysis()
+        roster_print("[Main] Computed analysis files deleted (save_computed=False).", config=config)
+
     return 0
 
 

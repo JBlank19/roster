@@ -2,7 +2,7 @@
 
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Callable, Literal, Mapping
+from typing import Callable, ClassVar, Literal, Mapping
 
 from .output import (
     DEFAULT_OUTPUT_MODE,
@@ -14,6 +14,7 @@ from .output import (
 from .time_window import (
     DEFAULT_ACTUAL_TIMES,
     DEFAULT_REFTZ,
+    DEFAULT_SAVE_COMPUTED,
     DEFAULT_WINDOW_LENGTH_HOURS,
     DEFAULT_WINDOW_START,
     validate_actual_times,
@@ -87,6 +88,10 @@ class PipelineConfig:
         Where ROSTER status messages are routed.
     log_file : Path | None
         Optional explicit log path used when output_mode is ``"file"``.
+    save_computed : bool
+        Whether to keep intermediate analysis files after the pipeline
+        completes.  Set to ``False`` to delete them automatically (saves
+        disk space on repeated runs).  Default is ``True``.
     """
 
     schedule_file: Path
@@ -100,6 +105,7 @@ class PipelineConfig:
     actual_times: bool = DEFAULT_ACTUAL_TIMES
     output_mode: OutputMode = DEFAULT_OUTPUT_MODE
     log_file: Path | None = None
+    save_computed: bool = DEFAULT_SAVE_COMPUTED
     manipulation_fn: ManipulationFn = field(default=_default_manipulation, repr=False)
     markov_manipulation_fn: MarkovManipulationFn = field(
         default=_default_markov_manipulation,
@@ -122,6 +128,14 @@ class PipelineConfig:
         self.window_start_mins = window_start_to_minutes(self.window_start)
         self.window_length_mins = int(self.window_length_hours) * 60
 
+    _ANALYSIS_NAMES: ClassVar[tuple[str, ...]] = (
+        "initial_conditions",
+        "markov",
+        "scheduled_turnaround_intraday_params",
+        "scheduled_turnaround_temporal_profile",
+        "scheduled_flight_time",
+    )
+
     # helpers
 
     def analysis_path(self, name: str) -> Path:
@@ -131,6 +145,11 @@ class PipelineConfig:
     def output_path(self, name: str) -> Path:
         """Return ``output_dir / <name><suffix>.csv``."""
         return self.output_dir / f"{name}{self.suffix}.csv"
+
+    def cleanup_analysis(self) -> None:
+        """Delete all intermediate analysis files from analysis_dir."""
+        for name in self._ANALYSIS_NAMES:
+            self.analysis_path(name).unlink(missing_ok=True)
 
     def resolved_log_file(self) -> Path:
         """Return the log path used when ``output_mode='file'``."""
