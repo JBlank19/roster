@@ -49,7 +49,12 @@ class InitialConditionModel:
       4. Call ``sample_initial_conditions()`` to draw one synthetic fleet.
     """
 
-    def __init__(self, flights: pd.DataFrame, seed: int, window_length_mins: int = END_OF_DAY):
+    def __init__(
+        self,
+        flights: pd.DataFrame,
+        seed: int,
+        window_length_mins: int = END_OF_DAY,
+    ):
         self.flights = flights.copy()
         self.rng = random.Random(seed)
         self._state = InitialConditionState()

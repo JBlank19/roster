@@ -371,6 +371,8 @@ def _sample_single_flight_flag(
     hmap = state.p_next_hourly.get(key)
     if hmap is None or hour not in hmap:
         hmap = state.p_next_hourly.get(fallback_key)
+    if hmap is None or hour not in hmap:
+        hmap = state.p_next_hourly.get(("ALL", "ALL"))
 
     if hmap is None or hour not in hmap:
         raise ValueError(

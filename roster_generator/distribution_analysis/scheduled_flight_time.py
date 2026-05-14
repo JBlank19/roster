@@ -49,7 +49,7 @@ STD_COL = "STD_REFTZ"
 STA_COL = "STA_REFTZ"
 
 BIN_SIZE = 5        # Flight time bin size (minutes)
-MIN_SAMPLES = 3     # Minimum samples to create a distribution
+MIN_SAMPLES = 1     # Minimum samples to create a distribution
 
 
 def _require_columns(df: pd.DataFrame, required: list[str], label: str) -> None:

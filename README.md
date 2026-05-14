@@ -69,6 +69,8 @@ The cleaner validates airport ICAO codes, parses timestamps, adds ICAO wake
 turbulence categories from aircraft type data, and writes the normalized schema
 above.
 
+Please note that a minimum of three full days of historical data is required for the simulation to be reasonably accurate. The generator uses distributions from every day it can find; therefore, if we only provide data for day 0—with flights arriving from day -1 or departing to day +1—this is insufficient because, for example, the airlines' fleet distributions would then be distorted. One day alone is not enough because then we would have a probability of ending the day at 0, and the prior flights (those arriving from -1) would not exist either.
+
 ## Using BTS Data
 
 ROSTER can also clean BTS on-time performance downloads into the same normalized

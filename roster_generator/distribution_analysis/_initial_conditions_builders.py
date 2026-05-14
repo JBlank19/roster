@@ -137,8 +137,12 @@ def _build_daily_fleet_gaussian_stats(state: InitialConditionState) -> None:
 
 def _build_origin_distribution(state: InitialConditionState) -> None:
     """Count first-departure airports per (airline, wake) for weighted sampling."""
+    # Exclude departures outside the window so origin_counts and first_std_samples
+    # stay consistent — avoids missing-distribution crashes for midnight departures.
+    in_window = state.first_dep["FIRST_STD_MIN_5"] < int(state.window_length_mins)
+    source = state.first_dep.loc[in_window]
     grouped = (
-        state.first_dep.groupby([AIRLINE_COL, AC_WAKE_COL, DEP_COL])
+        source.groupby([AIRLINE_COL, AC_WAKE_COL, DEP_COL])
         .size()
         .reset_index(name="COUNT")
     )
@@ -308,6 +312,16 @@ def _build_turnaround_temporal_probabilities(state: InitialConditionState) -> No
             frame,
             hour_bins=state.hour_bins,
         )
+
+    global_counts = (
+        linked.groupby(["HOUR_BIN", "CATEGORY"])
+        .size()
+        .reset_index(name="N")
+    )
+    state.p_next_hourly[("ALL", "ALL")] = _hourly_next_day_profile(
+        global_counts,
+        hour_bins=state.hour_bins,
+    )
 
 
 def _build_phys_ta_min(state: InitialConditionState) -> None:
